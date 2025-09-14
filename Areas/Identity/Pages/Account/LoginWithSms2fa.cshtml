@@ -1,0 +1,23 @@
+@page
+@model twoSaaSCore.Areas.Identity.Pages.Account.LoginWithSms2faModel
+@{
+    ViewData["Title"] = "SMS Two-Factor";
+}
+<h1 class="h5">@ViewData["Title"]</h1>
+@if (Model.CodeSent)
+{
+    <p>A security code was sent to your phone.</p>
+}
+<form method="post">
+    <div class="mb-2">
+        <label asp-for="Input.Code" class="form-label"></label>
+        <input asp-for="Input.Code" class="form-control" autocomplete="one-time-code" />
+        <span asp-validation-for="Input.Code" class="text-danger small"></span>
+    </div>
+    <input type="hidden" asp-for="ReturnUrl" />
+    <input type="hidden" asp-for="RememberMe" />
+    <button class="btn btn-primary">Verify</button>
+    <button formmethod="post" formaction="?handler=Send" class="btn btn-outline-secondary ms-2">Resend</button>
+    <a asp-page="./LoginWith2fa" asp-route-returnUrl="@Model.ReturnUrl" asp-route-rememberMe="@Model.RememberMe" class="btn btn-link">Use Authenticator</a>
+</form>
+<partial name="_ValidationScriptsPartial" />

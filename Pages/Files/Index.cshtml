@@ -1,0 +1,373 @@
+@page
+@model twoSaaSCore.Pages.Files.IndexModel
+@{
+    var inRoom = Model.RoomId.HasValue && Model.RoomId.Value != Guid.Empty;
+    var folderPath = Model.FolderPath ?? "";              // normalized (expected to end with / or empty)
+    var hasFolder = !string.IsNullOrEmpty(folderPath);
+    string CrumbLink(string fp) => Url.Page("./Index", new { roomId = Model.RoomId, folderPath = fp });
+    ViewData["Title"] = inRoom ? "Room Contents" : "Rooms";
+}
+
+@if (!inRoom)
+{
+    <h2 class="mb-3">Rooms</h2>
+
+    <div class="card mb-4">
+        <div class="card-header py-2">
+            <strong>Create Room</strong>
+        </div>
+        <div class="card-body">
+            <form method="post" asp-page-handler="CreateRoom" class="row g-2">
+                @Html.AntiForgeryToken()
+                <div class="col-md-4">
+                    <input name="name" class="form-control form-control-sm" placeholder="Room name" maxlength="160" required />
+                </div>
+                <div class="col-md-6">
+                    <input name="ndaText" class="form-control form-control-sm" placeholder="Optional NDA text" />
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button class="btn btn-sm btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    @if (Model.Rooms.Count == 0)
+    {
+        <div class="alert alert-info">No rooms yet.</div>
+    }
+    else
+    {
+        <table class="table table-sm align-middle">
+            <thead>
+            <tr>
+                <th>Name</th>
+                <th>Created (UTC)</th>
+                <th style="width:140px;"></th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var r in Model.Rooms.OrderByDescending(r => r.CreatedUtc))
+            {
+                <tr>
+                    <td>
+                        <a asp-page="./Index" asp-route-roomId="@r.RoomId">@r.Name</a><br />
+                        <small class="text-muted">@r.RoomId</small>
+                    </td>
+                    <td>@r.CreatedUtc.ToString("u")</td>
+                    <td class="text-end">
+                        <form method="post" asp-page-handler="DeleteRoom" asp-route-roomId="@r.RoomId" onsubmit="return confirm('Delete room and ALL contents?');" class="d-inline">
+                            @Html.AntiForgeryToken()
+                            <button class="btn btn-sm btn-outline-danger">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    }
+}
+else
+{
+    <div class="d-flex flex-wrap justify-content-between align-items-start mb-3 gap-2">
+        <div>
+            <a asp-page="./Index" class="btn btn-sm btn-link px-0">&laquo; Rooms</a>
+            <h2 class="d-inline-block ms-2">Room</h2>
+            <div><small class="text-muted">RoomId: @Model.RoomId</small></div>
+
+            <nav class="mt-2" aria-label="breadcrumb">
+                <ol class="breadcrumb mb-1">
+                    <li class="breadcrumb-item">
+                        <a href="@CrumbLink("")">/</a>
+                    </li>
+                    @{
+                        // Render folder path breadcrumbs
+                        if (hasFolder)
+                        {
+                            var segments = folderPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                            var agg = "";
+                            for (int i = 0; i < segments.Length; i++)
+                            {
+                                agg += segments[i] + "/";
+                                var isLast = i == segments.Length - 1;
+                                <li class="breadcrumb-item @(isLast ? "active" : "")" @(isLast ? "aria-current=\"page\"" : "")>
+                                    @if (!isLast)
+                                    {
+                                        <a href="@CrumbLink(agg)">@segments[i]</a>
+                                    }
+                                    else
+                                    {
+                                        @segments[i]
+                                    }
+                                </li>
+                            }
+                        }
+                    }
+                </ol>
+            </nav>
+        </div>
+        <div class="d-flex gap-2">
+            <form method="post" asp-page-handler="DeleteRoom" asp-route-roomId="@Model.RoomId" onsubmit="return confirm('Delete entire room and all blobs?');">
+                @Html.AntiForgeryToken()
+                <button class="btn btn-sm btn-outline-danger">Delete Room</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <!-- Create Folder -->
+        <div class="col-xl-4 col-lg-5">
+            <div class="card h-100">
+                <div class="card-header py-2"><strong>New Folder</strong></div>
+                <div class="card-body">
+                    <form method="post" asp-page-handler="CreateFolder" class="row g-2">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="roomId" value="@Model.RoomId" />
+                        <input type="hidden" name="parentPath" value="@folderPath" />
+                        <div class="col-7">
+                            <input name="folderName" class="form-control form-control-sm" maxlength="64" placeholder="Folder name" required />
+                        </div>
+                        <div class="col-5 d-grid">
+                            <button class="btn btn-sm btn-primary">Create</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Small Upload -->
+        <div class="col-xl-4 col-lg-3">
+            <div class="card h-100">
+                <div class="card-header py-2"><strong>Upload (Small)</strong></div>
+                <div class="card-body">
+                    <form method="post" enctype="multipart/form-data" asp-page-handler="Upload">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="roomId" value="@Model.RoomId" />
+                        <input type="hidden" name="folderPath" value="@folderPath" />
+                        <div class="mb-2">
+                            <input type="file" name="file" class="form-control form-control-sm" required />
+                        </div>
+                        <button class="btn btn-sm btn-primary">Upload</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Large Upload -->
+        <div class="col-xl-4 col-lg-4">
+            <div class="card h-100">
+                <div class="card-header py-2"><strong>Large Upload</strong></div>
+                <div class="card-body">
+                    <div class="mb-2">
+                        <input type="file" id="largeFile" class="form-control form-control-sm" />
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-4">
+                            <label class="form-label mb-1 small">Concurrency</label>
+                            <select id="concurrency" class="form-select form-select-sm">
+                                <option>1</option><option>2</option><option selected>4</option><option>8</option>
+                                <option>16</option><option>32</option><option>64</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label mb-1 small">Init (MB)</label>
+                            <select id="initialSize" class="form-select form-select-sm">
+                                <option value="0" selected>Auto</option>
+                                <option value="8">8</option><option value="16">16</option><option value="32">32</option>
+                                <option value="64">64</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label mb-1 small">Block (MB)</label>
+                            <select id="blockSize" class="form-select form-select-sm">
+                                <option value="4">4</option><option value="8" selected>8</option><option value="16">16</option>
+                                <option value="32">32</option><option value="64">64</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-success" id="startLargeUpload"
+                                data-room-id="@Model.RoomId"
+                                data-folder-path="@folderPath">Start</button>
+                        <button class="btn btn-sm btn-outline-secondary" id="cancelUpload" disabled>Cancel</button>
+                    </div>
+                    <div class="progress mt-2" style="height:20px; display:none" id="progWrap">
+                        <div class="progress-bar" id="progBar" role="progressbar" style="width:0%">0%</div>
+                    </div>
+                    <div class="small text-muted mt-1" id="uploadStatus"></div>
+                    <div class="mt-2" id="metricsContainer" style="display:none">
+                        <details>
+                            <summary class="small">Metrics</summary>
+                            <pre class="small mb-0" id="metricsText"></pre>
+                        </details>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Folders list -->
+    <h5 class="mt-3">Folders</h5>
+    @if (Model.Folders.Count == 0)
+    {
+        <div class="text-muted small mb-3">No subfolders.</div>
+    }
+    else
+    {
+        <table class="table table-sm align-middle mb-4">
+            <thead>
+            <tr>
+                <th>Name</th>
+                <th>Created (UTC)</th>
+                <th style="width:160px;"></th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var f in Model.Folders.OrderBy(x => x.Name))
+            {
+                var subPath = f.Path; // Already normalized with trailing /
+                <tr>
+                    <td>
+                        <a asp-page="./Index"
+                           asp-route-roomId="@Model.RoomId"
+                           asp-route-folderPath="@subPath">@f.Name</a>
+                        <br /><small class="text-muted">@subPath</small>
+                    </td>
+                    <td>@f.CreatedUtc.ToString("u")</td>
+                    <td class="text-end">
+                        <form method="post"
+                              asp-page-handler="DeleteFolder"
+                              asp-route-roomId="@Model.RoomId"
+                              asp-route-folderPath="@subPath"
+                              onsubmit="return confirm('Delete folder (non-recursive)?');"
+                              class="d-inline">
+                            @Html.AntiForgeryToken()
+                            <button class="btn btn-sm btn-outline-danger">Delete</button>
+                        </form>
+                        <form method="post"
+                              asp-page-handler="DeleteFolder"
+                              asp-route-roomId="@Model.RoomId"
+                              asp-route-folderPath="@subPath"
+                              asp-route-recursive="true"
+                              onsubmit="return confirm('Delete folder and ALL contents?');"
+                              class="d-inline ms-1">
+                            @Html.AntiForgeryToken()
+                            <button class="btn btn-sm btn-danger">Recursive</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    }
+
+    <!-- Files list -->
+    <h5 class="mt-3">Files @(hasFolder ? $"in {folderPath}" : "(root)")</h5>
+    @if (Model.Files.Count == 0)
+    {
+        <div class="alert alert-info">No files here.</div>
+    }
+    else
+    {
+        <table class="table table-sm align-middle">
+            <thead>
+            <tr>
+                <th>File Name</th>
+                <th class="text-end">Size (MB)</th>
+                <th>Uploaded (UTC)</th>
+                <th>By</th>
+                <th style="width:180px;"></th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var f in Model.Files.OrderByDescending(f => f.UploadedUtc))
+            {
+                var isPdf = System.IO.Path.GetExtension(f.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+                <tr>
+                    <td>@f.FileName<br /><small class="text-muted">@f.FileId</small></td>
+                    <td class="text-end">@((f.Size / 1024d / 1024d).ToString("0.00"))</td>
+                    <td>@f.UploadedUtc.ToString("u")</td>
+                    <td>@f.UploadedBy</td>
+                    <td class="text-end d-flex gap-1 justify-content-end">
+                        @if (isPdf)
+                        {
+                            <a class="btn btn-sm btn-outline-primary"
+                               asp-page="/Files/ViewPdf"
+                               asp-route-roomId="@Model.RoomId"
+                               asp-route-fileId="@f.FileId"
+                               target="_blank">View</a>
+                        }
+                        <form method="post"
+                              asp-page-handler="DeleteFile"
+                              asp-route-roomId="@Model.RoomId"
+                              asp-route-fileId="@f.FileId"
+                              asp-route-folderPath="@folderPath"
+                              onsubmit="return confirm('Delete this file?');"
+                              class="d-inline">
+                            @Html.AntiForgeryToken()
+                            <button class="btn btn-sm btn-outline-danger">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    }
+}
+
+@section Scripts {
+    <script type="module">
+        // Large upload script expects startLargeUpload({ file, sasUrl, onAfterComplete })
+        // Adjust for folderPath
+        import { startLargeUpload } from '/js/large-upload.js'; // adapt existing helper
+
+        const btn = document.getElementById('startLargeUpload');
+        if (btn) {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const roomId = btn.getAttribute('data-room-id');
+                const folderPath = btn.getAttribute('data-folder-path') || '';
+                const fileInput = document.getElementById('largeFile');
+                if (!fileInput.files.length) {
+                    alert('Select a file first.');
+                    return;
+                }
+                const file = fileInput.files[0];
+
+                // INIT
+                const initForm = new FormData();
+                initForm.append('roomId', roomId);
+                initForm.append('fileName', file.name);
+                initForm.append('folderPath', folderPath);
+
+                const initResp = await fetch('?handler=InitLarge', { method: 'POST', body: initForm });
+                if (!initResp.ok) {
+                    alert('Init failed.');
+                    return;
+                }
+                const { blobName, sas } = await initResp.json();
+
+                await startLargeUpload({
+                    file,
+                    sasUrl: sas,
+                    onAfterComplete: async () => {
+                        const finalize = new FormData();
+                        finalize.append('roomId', roomId);
+                        finalize.append('blobName', blobName);
+                        finalize.append('fileName', file.name);
+                        finalize.append('size', file.size.toString());
+                        finalize.append('contentType', file.type || 'application/octet-stream');
+                        finalize.append('folderPath', folderPath);
+
+                        const fin = await fetch('?handler=FinalizeLarge', { method: 'POST', body: finalize });
+                        if (!fin.ok) {
+                            alert('Finalize failed (retry).');
+                        } else {
+                            location.reload();
+                        }
+                    }
+                });
+            });
+        }
+    </script>
+}

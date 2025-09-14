@@ -1,0 +1,17 @@
+@page
+@model twoSaaSCore.Areas.Identity.Pages.Account.Manage.RequireMfaModel
+@{
+    ViewData["Title"] = "Multi-Factor Authentication Required";
+}
+<h1 class="h5">@ViewData["Title"]</h1>
+<p class="mb-3">
+    You must configure at least one multi-factor authentication method before continuing.
+</p>
+<ol class="mb-3">
+    <li>Preferred: <a asp-page="./EnableAuthenticator">Set up an authenticator app (TOTP)</a></li>
+    <li>Optional backup: <a asp-page="./PhoneNumber">Add and verify your phone number for SMS codes</a></li>
+    <li>After enabling, generate and store recovery codes.</li>
+</ol>
+<p>
+    Once completed, return to your original page or <a asp-page="/Index">home</a>.
+</p>

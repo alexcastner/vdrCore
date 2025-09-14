@@ -1,0 +1,45 @@
+@page
+@model twoSaaSCore.Areas.Identity.Pages.Account.RegisterModel
+@{
+    ViewData["Title"] = "Register";
+}
+<h1>@ViewData["Title"]</h1>
+<div class="row">
+    <div class="col-md-6">
+        <form method="post">
+            <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+            <div class="form-group">
+                <label asp-for="Input.Email"></label>
+                <input asp-for="Input.Email" class="form-control" />
+                <span asp-validation-for="Input.Email" class="text-danger"></span>
+            </div>
+            <div class="form-group">
+                <label asp-for="Input.Password"></label>
+                <input asp-for="Input.Password" class="form-control" />
+                <span asp-validation-for="Input.Password" class="text-danger"></span>
+            </div>
+            <div class="form-group">
+                <label asp-for="Input.ConfirmPassword"></label>
+                <input asp-for="Input.ConfirmPassword" class="form-control" />
+                <span asp-validation-for="Input.ConfirmPassword" class="text-danger"></span>
+            </div>
+            <hr />
+           @*  <div class="form-group">
+                <label asp-for="Input.TenantName"></label>
+                <input asp-for="Input.TenantName" class="form-control" />
+                <span class="form-text text-muted">If joining an existing tenant, leave Tenant Name blank.</span>
+                <span asp-validation-for="Input.TenantName" class="text-danger"></span>
+            </div>
+            <div class="form-group">
+                <label asp-for="Input.Subdomain"></label>
+                <input asp-for="Input.Subdomain" class="form-control" />
+                <span class="form-text text-muted">Your tenant subdomain (e.g., "acme" for acme.example.com)</span>
+                <span asp-validation-for="Input.Subdomain" class="text-danger"></span>
+            </div> *@
+            <button type="submit" class="btn btn-primary">Register</button>
+        </form>
+    </div>
+</div>
+@section Scripts {
+    <partial name="~/Pages/Shared/_ValidationScriptsPartial.cshtml" />
+}

@@ -1,0 +1,39 @@
+@page
+@model twoSaaSCore.Areas.Identity.Pages.Account.Manage.PhoneNumberModel
+@{
+    ViewData["Title"] = "Phone Number";
+}
+<h4>@ViewData["Title"]</h4>
+@if (TempData["PhoneVerifySent"] != null) { <div class="alert alert-info py-1">Verification SMS sent.</div> }
+@if (TempData["PhoneConfirmed"] != null) { <div class="alert alert-success py-1">Phone verified.</div> }
+
+@if (!Model.PhoneConfirmed)
+{
+    <form method="post" asp-page-handler="Send" class="mb-3">
+        <div class="mb-2">
+            <label asp-for="Input.PhoneNumber" class="form-label"></label>
+            <input asp-for="Input.PhoneNumber" class="form-control form-control-sm" value="@Model.CurrentPhone" />
+            <span asp-validation-for="Input.PhoneNumber" class="text-danger small"></span>
+        </div>
+        <button class="btn btn-sm btn-primary">Send Code</button>
+    </form>
+
+    <form method="post" asp-page-handler="Verify">
+        <div class="mb-2">
+            <label asp-for="Input.PhoneNumber" class="form-label"></label>
+            <input asp-for="Input.PhoneNumber" class="form-control form-control-sm" value="@Model.Input.PhoneNumber" />
+        </div>
+        <div class="mb-2">
+            <label asp-for="Input.Code" class="form-label"></label>
+            <input asp-for="Input.Code" class="form-control form-control-sm" />
+            <span asp-validation-for="Input.Code" class="text-danger small"></span>
+        </div>
+        <button class="btn btn-sm btn-success">Verify</button>
+    </form>
+}
+else
+{
+    <p class="text-success">Phone confirmed: <code>@Model.CurrentPhone</code></p>
+    <p>You can re-send or change the number by entering a new one above.</p>
+}
+<partial name="_ValidationScriptsPartial" />
