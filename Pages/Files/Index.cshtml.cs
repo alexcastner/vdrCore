@@ -272,6 +272,7 @@ namespace twoSaaSCore.Pages.Files
 
             folderPath = NormalizeFolderPath(folderPath);
             await _catalog.DeleteFileAsync(tenantId, roomId, fileId, folderPath);
+
             return RedirectToPage(new { roomId, folderPath });
         }
 

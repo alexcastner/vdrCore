@@ -6,8 +6,17 @@ using twoSaaSCore.Models;
 using twoSaaSCore.Services;
 using twoSaaSCore.Middleware;
 using twoSaaSCore.Filters;
+using Syncfusion.Licensing; // add
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Register Syncfusion license (configure in appsettings or user-secrets: "Syncfusion:LicenseKey")
+var sfLicense = builder.Configuration["Syncfusion:LicenseKey"];
+if (!string.IsNullOrWhiteSpace(sfLicense))
+{
+    SyncfusionLicenseProvider.RegisterLicense(sfLicense);
+}
+
 
 // Add services to the container.
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
@@ -34,6 +43,8 @@ builder.Services.AddDefaultIdentity<ApplicationUser>(options =>
 
 // Register the MFA enforcement filter in DI
 builder.Services.AddScoped<RequireAnyMfaFilter>();
+
+builder.Services.AddScoped<IAuditLogger, SqlLedgerAuditLogger>();
 
 builder.Services.AddRazorPages(options =>
 {

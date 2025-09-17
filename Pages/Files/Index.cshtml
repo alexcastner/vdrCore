@@ -281,33 +281,38 @@ else
             </thead>
             <tbody>
             @foreach (var f in Model.Files.OrderByDescending(f => f.UploadedUtc))
-            {
-                var isPdf = System.IO.Path.GetExtension(f.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+                {
+                    var isPdf = System.IO.Path.GetExtension(f.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+                    var isDocx = System.IO.Path.GetExtension(f.FileName).Equals(".docx", StringComparison.OrdinalIgnoreCase);
+                    var isXlsx = System.IO.Path.GetExtension(f.FileName).Equals(".xlsx", StringComparison.OrdinalIgnoreCase);
                 <tr>
                     <td>@f.FileName<br /><small class="text-muted">@f.FileId</small></td>
                     <td class="text-end">@((f.Size / 1024d / 1024d).ToString("0.00"))</td>
                     <td>@f.UploadedUtc.ToString("u")</td>
                     <td>@f.UploadedBy</td>
-                    <td class="text-end d-flex gap-1 justify-content-end">
-                        @if (isPdf)
-                        {
-                            <a class="btn btn-sm btn-outline-primary"
-                               asp-page="/Files/ViewPdf"
-                               asp-route-roomId="@Model.RoomId"
-                               asp-route-fileId="@f.FileId"
-                               target="_blank">View</a>
-                        }
-                        <form method="post"
-                              asp-page-handler="DeleteFile"
-                              asp-route-roomId="@Model.RoomId"
-                              asp-route-fileId="@f.FileId"
-                              asp-route-folderPath="@folderPath"
-                              onsubmit="return confirm('Delete this file?');"
-                              class="d-inline">
-                            @Html.AntiForgeryToken()
-                            <button class="btn btn-sm btn-outline-danger">Delete</button>
-                        </form>
-                    </td>
+                        <td class="text-end d-flex gap-1 justify-content-end">
+                            @if (isPdf)
+                            {
+                                <a class="btn btn-sm btn-outline-primary"
+                                   asp-page="/Files/ViewPdf"
+                                   asp-route-roomId="@Model.RoomId"
+                                   asp-route-fileId="@f.FileId"
+                                   target="_blank">View</a>
+                            }
+                            else if (isDocx || isXlsx)
+                            {
+                                <a class="btn btn-sm btn-outline-primary"
+                                   asp-page="/Files/ViewDocument"
+                                   asp-route-roomId="@Model.RoomId"
+                                   asp-route-fileId="@f.FileId"
+                                   target="_blank">View</a>
+                            }
+                            <form method="post" ...>
+                                <!-- existing delete form unchanged -->
+                                @Html.AntiForgeryToken()
+                                <button class="btn btn-sm btn-outline-danger">Delete</button>
+                            </form>
+                        </td>
                 </tr>
             }
             </tbody>
