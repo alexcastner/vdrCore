@@ -122,7 +122,7 @@ namespace twoSaaSCore.Pages.Files
                 return StatusCode(500, "Failed to generate SAS for cached PDF.");
             }
 
-            await _auditLogger.LogAsync(new AuditEntry(
+            await _auditLogger.LogAsync(new AuditEntry(DateTime.UtcNow,
                 tenantId,
                 RoomId,
                 FileId,

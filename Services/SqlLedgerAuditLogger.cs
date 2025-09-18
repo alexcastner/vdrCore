@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
@@ -42,6 +43,45 @@ VALUES (@TenantId, @RoomId, @FileId, @UserId, @Action, @FileName, @FileSize, @Fi
             cmd.Parameters.AddWithValue("@SrcExt", (object?)e.SrcExt ?? DBNull.Value);
 
             await cmd.ExecuteNonQueryAsync();
+        }
+
+        // Export all audit records for a given tenant as AuditEntry records
+        public async Task<List<AuditEntry>> ExportAuditEntriesAsync(Guid tenantId)
+        {
+            var result = new List<AuditEntry>();
+            const string sql = @"
+SELECT ActionUtc,TenantId, RoomId, FileId, Action, UserId, FileName, FileSize, FileSha256,
+       SrcExt, IpAddress, UserAgent, CorrelationId, ExtraJson
+FROM dbo.DocumentAuditLog
+WHERE TenantId = @TenantId
+ORDER BY ActionUtc";
+
+            await using var conn = new SqlConnection(_connStr);
+            await conn.OpenAsync();
+            await using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@TenantId", tenantId);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                result.Add(new AuditEntry(
+                    reader.GetDateTime(0), // ActionUtc
+                    reader.GetGuid(1), // TenantId
+                    reader.IsDBNull(2) ? null : reader.GetGuid(2), // RoomId
+                    reader.IsDBNull(3) ? null : reader.GetGuid(3), // FileId
+                    reader.GetString(4), // Action
+                    reader.IsDBNull(5) ? null : reader.GetString(5), // UserId
+                    reader.IsDBNull(6) ? null : reader.GetString(6), // FileName
+                    reader.IsDBNull(7) ? null : reader.GetInt64(7), // FileSize
+                    reader.IsDBNull(8) ? null : reader.GetString(8), // FileSha256
+                    reader.IsDBNull(9) ? null : reader.GetString(9), // SrcExt
+                    reader.IsDBNull(10) ? null : reader.GetString(10), // IpAddress
+                    reader.IsDBNull(11) ? null : reader.GetString(11), // UserAgent
+                    reader.GetGuid(12), // CorrelationId
+                    reader.IsDBNull(13) ? null : reader.GetString(13) // ExtraJson
+                ));
+            }
+            return result;
         }
     }
 }

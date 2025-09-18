@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 namespace twoSaaSCore.Services
 {
     public record AuditEntry(
+        DateTime ActionUtc, // <-- Added timestamp property
         Guid TenantId,
         Guid? RoomId,
         Guid? FileId,
@@ -17,7 +18,9 @@ namespace twoSaaSCore.Services
         string? IpAddress,
         string? UserAgent,
         Guid CorrelationId,
-        string? ExtraJson);
+        string? ExtraJson
+       
+    );
 
     public interface IAuditLogger
     {
