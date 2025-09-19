@@ -188,7 +188,7 @@ namespace twoSaaSCore.Services
                         {"tenantId", tenantId.ToString()},
                         {"roomId", roomId.ToString()},
                         {"fileId", fileId.ToString()},
-                        {TagFileNameEncoded, EncodeFileNameForTag(originalFileName)},
+                //        {TagFileNameEncoded, EncodeFileNameForTag(originalFileName)},
                         {"uploadedBy", TruncateForTag(userId ?? "")},
                         {"uploadedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()},
                         {"folderPath", folderPath ?? ""}

@@ -252,16 +252,18 @@ namespace twoSaaSCore.Pages.Files
             var blob = container.GetBlobClient(blobName);
 
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+
+            // IMPORTANT: URL-encode all values that may contain spaces or special characters
             var tags = new Dictionary<string, string>
             {
                 {"tenantId", tenantId.ToString() },
                 {"roomId", roomId.ToString() },
                 {"fileId", fileId.ToString() },
-                {"uploadedBy", TruncateForTag(userId) },
+                {"uploadedBy", EncodeTagValue(userId) },                  // was raw, now encoded
                 {"uploadedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString() },
                 {"size", size.ToString() },
-                {"folderPath", folderPath ?? "" },
-                {"fileNameEnc", EncodeFileNameForTag(fileName) }
+                {"folderPath", EncodeTagValue(folderPath ?? "") },        // was raw, now encoded
+               // {"fileNameEnc", EncodeFileNameForTag(fileName) }          // already encoded + length-safe
             };
 
             try
@@ -664,6 +666,15 @@ namespace twoSaaSCore.Pages.Files
 
             using var data = image.Encode(fmt, quality);
             return data.ToArray();
+        }
+
+        // Helpers (add below your other helpers)
+        private static string EncodeTagValue(string? value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            var trimmed = value.Trim();
+            var encoded = Uri.EscapeDataString(trimmed);
+            return encoded.Length <= MaxTagValueLength ? encoded : encoded[..MaxTagValueLength];
         }
     }
 }
