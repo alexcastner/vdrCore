@@ -296,11 +296,11 @@ namespace twoSaaSCore.Pages.Files
               tenantId,
               RoomId,
               fileId,
-              "View",
+              "Delete", // was "View"
               User.Identity?.Name,
               originalName,
               metadata.Size,
-              null,//metadata.HashSha256, // if you store it; else null
+              null,
               Path.GetExtension(originalName)?.ToLowerInvariant(),
               HttpContext.Connection.RemoteIpAddress?.ToString(),
               Request.Headers.UserAgent.ToString().Truncate(256),

@@ -312,10 +312,15 @@ else
                                asp-page-handler="Download"
                                asp-route-roomId="@Model.RoomId"
                                asp-route-fileId="@f.FileId">Download</a>
-                            <form method="post" ...>
-                                <!-- existing delete form unchanged -->
+                            <form method="post"
+                                  asp-page-handler="DeleteFile"
+                                  asp-route-roomId="@Model.RoomId"
+                                  asp-route-fileId="@f.FileId"
+                                  asp-route-folderPath="@folderPath"
+                                  onsubmit="return confirm('Delete this file?');"
+                                  class="d-inline">
                                 @Html.AntiForgeryToken()
-                                <button class="btn btn-sm btn-outline-danger">Delete</button>
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
                             </form>
                         </td>
                 </tr>
@@ -327,9 +332,7 @@ else
 
 @section Scripts {
     <script type="module">
-        // Large upload script expects startLargeUpload({ file, sasUrl, onAfterComplete })
-        // Adjust for folderPath
-        import { startLargeUpload } from '/js/large-upload.js'; // adapt existing helper
+        import { startLargeUpload } from '/js/large-upload.js';
 
         const btn = document.getElementById('startLargeUpload');
         if (btn) {
@@ -338,23 +341,21 @@ else
                 const roomId = btn.getAttribute('data-room-id');
                 const folderPath = btn.getAttribute('data-folder-path') || '';
                 const fileInput = document.getElementById('largeFile');
-                if (!fileInput.files.length) {
-                    alert('Select a file first.');
-                    return;
-                }
+                if (!fileInput.files.length) { alert('Select a file first.'); return; }
                 const file = fileInput.files[0];
+
+                // Get anti-forgery token rendered on the page
+                const token = document.querySelector('input[name="__RequestVerificationToken"]')?.value;
 
                 // INIT
                 const initForm = new FormData();
                 initForm.append('roomId', roomId);
                 initForm.append('fileName', file.name);
                 initForm.append('folderPath', folderPath);
+                if (token) initForm.append('__RequestVerificationToken', token);
 
                 const initResp = await fetch('?handler=InitLarge', { method: 'POST', body: initForm });
-                if (!initResp.ok) {
-                    alert('Init failed.');
-                    return;
-                }
+                if (!initResp.ok) { alert('Init failed.'); return; }
                 const { blobName, sas } = await initResp.json();
 
                 await startLargeUpload({
@@ -368,13 +369,11 @@ else
                         finalize.append('size', file.size.toString());
                         finalize.append('contentType', file.type || 'application/octet-stream');
                         finalize.append('folderPath', folderPath);
+                        if (token) finalize.append('__RequestVerificationToken', token);
 
                         const fin = await fetch('?handler=FinalizeLarge', { method: 'POST', body: finalize });
-                        if (!fin.ok) {
-                            alert('Finalize failed (retry).');
-                        } else {
-                            location.reload();
-                        }
+                        if (!fin.ok) { alert('Finalize failed (retry).'); }
+                        else { location.reload(); }
                     }
                 });
             });
