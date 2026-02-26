@@ -87,9 +87,12 @@ import SparkMD5 from 'https://cdn.jsdelivr.net/npm/spark-md5@3.0.2/+esm';
       }
     } catch { /* ignore duplicate check failure */ }
 
+    const roomId = btn.getAttribute('data-room-id') || '';
+    const folderPath = btn.getAttribute('data-folder-path') || '';
+
     status.textContent='Requesting SAS...';
     let init;
-    try { init = await postForm('InitLarge', { fileName: file.name }); }
+    try { init = await postForm('InitLarge', { roomId, fileName: file.name, folderPath }); }
     catch(err){ status.textContent='Failed to init: '+err.message; btn.disabled=false; cancelBtn.disabled=true; return; }
 
     const client = new BlockBlobClient(init.sas);
@@ -132,10 +135,12 @@ import SparkMD5 from 'https://cdn.jsdelivr.net/npm/spark-md5@3.0.2/+esm';
       status.textContent=`Upload complete in ${(totalMs/1000).toFixed(2)}s Avg: ${formatSpeed(avgSpeed)}`;
 
       await postForm('FinalizeLarge', {
+        roomId,
         blobName:init.blobName,
         fileName:file.name,
         size:file.size,
         contentType:file.type,
+        folderPath,
         uploadDurationMs: Math.round(totalMs),
         averageBytesPerSecond: Math.round(avgSpeed),
         blockSizeMB: blockSizeMB,

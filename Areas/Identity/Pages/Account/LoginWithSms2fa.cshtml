@@ -20,4 +20,6 @@
     <button formmethod="post" formaction="?handler=Send" class="btn btn-outline-secondary ms-2">Resend</button>
     <a asp-page="./LoginWith2fa" asp-route-returnUrl="@Model.ReturnUrl" asp-route-rememberMe="@Model.RememberMe" class="btn btn-link">Use Authenticator</a>
 </form>
-<partial name="_ValidationScriptsPartial" />
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

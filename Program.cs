@@ -46,18 +46,30 @@ builder.Services.AddScoped<RequireAnyMfaFilter>();
 
 builder.Services.AddScoped<IAuditLogger, SqlLedgerAuditLogger>();
 
+// Register SMS sender (Twilio when enabled, otherwise no-op)
+var twilioSection = builder.Configuration.GetSection("Twilio");
+if (twilioSection.GetValue<bool>("Enable"))
+{
+    var sid = twilioSection["AccountSid"]!;
+    var token = twilioSection["AuthToken"]!;
+    var from = twilioSection["FromNumber"]!;
+    builder.Services.AddSingleton<ISmsSender>(new TwilioSmsSender(sid, token, from));
+}
+else
+{
+    builder.Services.AddSingleton<ISmsSender, NoopSmsSender>();
+}
+
 builder.Services.AddRazorPages(options =>
 {
 //    // OPTION 1 (simplest): apply to every Razor Page
 //    options.Filters.Add<RequireAnyMfaFilter>();
 
-//OPTION 2(more selective): apply only to pages under root folder(comment OPTION 1 if using)
-     options.Conventions.AddFolderApplicationModelConvention("/", model =>
-     {
-         // model.Filters is IList<IFilterMetadata>; AddService<T>() is NOT available here.
-         // Use a ServiceFilterAttribute to get DI resolution.
-         model.Filters.Add(new ServiceFilterAttribute(typeof(RequireAnyMfaFilter)));
-     });
+// OPTION 2 (more selective): apply only to pages under root folder (comment OPTION 1 if using)
+    // options.Conventions.AddFolderApplicationModelConvention("/", model =>
+    // {
+    //     model.Filters.Add(new ServiceFilterAttribute(typeof(RequireAnyMfaFilter)));
+    // });
 
     // OPTION 3 (all pages via convention): uncomment if you prefer a single line
     // options.Conventions.ConfigureFilter(new ServiceFilterAttribute(typeof(RequireAnyMfaFilter)));

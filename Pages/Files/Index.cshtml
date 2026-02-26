@@ -321,58 +321,5 @@ else
 }
 
 @section Scripts {
-    <script type="module">
-        // Large upload script expects startLargeUpload({ file, sasUrl, onAfterComplete })
-        // Adjust for folderPath
-        import { startLargeUpload } from '/js/large-upload.js'; // adapt existing helper
-
-        const btn = document.getElementById('startLargeUpload');
-        if (btn) {
-            btn.addEventListener('click', async (e) => {
-                e.preventDefault();
-                const roomId = btn.getAttribute('data-room-id');
-                const folderPath = btn.getAttribute('data-folder-path') || '';
-                const fileInput = document.getElementById('largeFile');
-                if (!fileInput.files.length) {
-                    alert('Select a file first.');
-                    return;
-                }
-                const file = fileInput.files[0];
-
-                // INIT
-                const initForm = new FormData();
-                initForm.append('roomId', roomId);
-                initForm.append('fileName', file.name);
-                initForm.append('folderPath', folderPath);
-
-                const initResp = await fetch('?handler=InitLarge', { method: 'POST', body: initForm });
-                if (!initResp.ok) {
-                    alert('Init failed.');
-                    return;
-                }
-                const { blobName, sas } = await initResp.json();
-
-                await startLargeUpload({
-                    file,
-                    sasUrl: sas,
-                    onAfterComplete: async () => {
-                        const finalize = new FormData();
-                        finalize.append('roomId', roomId);
-                        finalize.append('blobName', blobName);
-                        finalize.append('fileName', file.name);
-                        finalize.append('size', file.size.toString());
-                        finalize.append('contentType', file.type || 'application/octet-stream');
-                        finalize.append('folderPath', folderPath);
-
-                        const fin = await fetch('?handler=FinalizeLarge', { method: 'POST', body: finalize });
-                        if (!fin.ok) {
-                            alert('Finalize failed (retry).');
-                        } else {
-                            location.reload();
-                        }
-                    }
-                });
-            });
-        }
-    </script>
+    <script type="module" src="/js/large-upload.js"></script>
 }

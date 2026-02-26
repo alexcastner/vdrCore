@@ -36,4 +36,6 @@ else
     <p class="text-success">Phone confirmed: <code>@Model.CurrentPhone</code></p>
     <p>You can re-send or change the number by entering a new one above.</p>
 }
-<partial name="_ValidationScriptsPartial" />
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
