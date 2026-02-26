@@ -42,5 +42,7 @@ namespace twoSaaSCore.Services
         Task DeleteFileAsync(Guid tenantId, Guid roomId, Guid fileId, string? folderPath = null, CancellationToken ct = default);
 
         Task DeleteRoomAsync(Guid tenantId, Guid roomId, CancellationToken ct = default);
+
+        Task<RoomMetadata> CloneRoomAsync(Guid tenantId, Guid sourceRoomId, string newName, string? ndaText, string? userId, CancellationToken ct = default);
     }
 }

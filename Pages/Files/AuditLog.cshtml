@@ -1,0 +1,93 @@
+@page
+@model twoSaaSCore.Pages.Files.AuditLogModel
+@{
+    ViewData["Title"] = "Audit Log";
+
+    string TimeAgo(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalHours < 1) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalDays < 1) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 30) return $"{(int)diff.TotalDays}d ago";
+        return dt.ToString("MMM d, yyyy HH:mm");
+    }
+
+    string ActionBadge(string action) => action.ToLowerInvariant() switch
+    {
+        "view" => "bg-info text-dark",
+        "download" => "bg-primary",
+        "upload" => "bg-success",
+        "delete" => "bg-danger",
+        _ => "bg-secondary"
+    };
+}
+
+<div class="vr-page-header">
+    <div>
+        <a asp-page="./Index" asp-route-roomId="@Model.RoomId" class="vr-back-link">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Back to Room
+        </a>
+        <h1 class="vr-page-title">
+            <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -4px; margin-right: 6px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            Audit Log
+        </h1>
+    </div>
+</div>
+
+@if (Model.Entries.Count == 0)
+{
+    <div class="vr-empty-state">
+        <h3>No audit events yet</h3>
+        <p>Activity in this room will be recorded here.</p>
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm align-middle vr-file-table">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Action</th>
+                    <th>User</th>
+                    <th>File</th>
+                    <th>IP Address</th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var e in Model.Entries)
+            {
+                <tr>
+                    <td style="font-size: 0.82rem; white-space: nowrap;" title="@e.ActionUtc.ToString("u")">@TimeAgo(e.ActionUtc)</td>
+                    <td><span class="badge @ActionBadge(e.Action)">@e.Action</span></td>
+                    <td style="font-size: 0.85rem;">@(e.UserEmail ?? e.UserId ?? "—")</td>
+                    <td style="font-size: 0.85rem; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="@e.FileName">@(e.FileName ?? "—")</td>
+                    <td style="font-size: 0.82rem; font-family: monospace;">@(e.IpAddress ?? "—")</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <nav class="d-flex justify-content-between align-items-center mt-3">
+        @if (Model.CurrentPage > 1)
+        {
+            <a asp-page="./AuditLog" asp-route-roomId="@Model.RoomId" asp-route-page_="@(Model.CurrentPage - 1)" class="btn btn-sm btn-outline-secondary">&laquo; Previous</a>
+        }
+        else
+        {
+            <span></span>
+        }
+        <span class="text-muted small">Page @Model.CurrentPage</span>
+        @if (Model.HasMore)
+        {
+            <a asp-page="./AuditLog" asp-route-roomId="@Model.RoomId" asp-route-page_="@(Model.CurrentPage + 1)" class="btn btn-sm btn-outline-secondary">Next &raquo;</a>
+        }
+        else
+        {
+            <span></span>
+        }
+    </nav>
+}

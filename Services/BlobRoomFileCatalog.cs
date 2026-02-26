@@ -2,6 +2,7 @@ using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Sas;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
@@ -12,6 +13,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using twoSaaSCore.Data;
+using twoSaaSCore.Models;
 
 namespace twoSaaSCore.Services
 {
@@ -20,6 +23,7 @@ namespace twoSaaSCore.Services
         private readonly BlobContainerClient _container;
         private readonly BlobServiceClient _service;
         private readonly AzureBlobOptions _options;
+        private readonly ApplicationDbContext _db;
 
         private const string FolderMarkerName = "_folder.json";
         private const string RoomMarkerName = "_room.json";
@@ -27,11 +31,12 @@ namespace twoSaaSCore.Services
         private const string TagFileNameEncoded = "fileNameEnc";
         private const string TagFolder = "isFolder";
 
-        public BlobRoomFileCatalog(IOptions<AzureBlobOptions> opt)
+        public BlobRoomFileCatalog(IOptions<AzureBlobOptions> opt, ApplicationDbContext db)
         {
             _options = opt.Value;
             _service = new BlobServiceClient(_options.ConnectionString);
             _container = _service.GetBlobContainerClient(_options.Container);
+            _db = db;
             if (_options.CreateContainerIfNotExists)
                 _container.CreateIfNotExists(PublicAccessType.None);
         }
@@ -195,6 +200,23 @@ namespace twoSaaSCore.Services
                     }
                 }, ct);
             }
+
+            // Write SQL reference
+            _db.RoomFileRefs.Add(new RoomFileRef
+            {
+                TenantId = tenantId,
+                RoomId = roomId,
+                FileId = fileId,
+                BlobName = blobName,
+                OriginalFileName = originalFileName,
+                Size = size,
+                ContentType = contentType,
+                FolderPath = string.IsNullOrEmpty(folderPath) ? null : folderPath,
+                AddedUtc = DateTimeOffset.UtcNow,
+                AddedByUserId = userId
+            });
+            await _db.SaveChangesAsync(ct);
+
             return new FileMetadata(tenantId, roomId, fileId, originalFileName, size, DateTimeOffset.UtcNow, userId, blobName, contentType);
         }
 
@@ -216,6 +238,14 @@ namespace twoSaaSCore.Services
 
         public async Task<FileMetadata?> GetFileAsync(Guid tenantId, Guid roomId, Guid fileId, string? folderPath = null, CancellationToken ct = default)
         {
+            var ref_ = await _db.RoomFileRefs
+                .FirstOrDefaultAsync(r => r.TenantId == tenantId && r.RoomId == roomId && r.FileId == fileId, ct);
+
+            if (ref_ != null)
+                return new FileMetadata(tenantId, roomId, ref_.FileId, ref_.OriginalFileName,
+                    ref_.Size, ref_.AddedUtc, ref_.AddedByUserId, ref_.BlobName, ref_.ContentType);
+
+            // Fallback: scan blobs for legacy files not yet in SQL
             folderPath = NormalizeFolderPath(folderPath);
             var prefix = $"{tenantId}/{roomId}/";
             if (!string.IsNullOrEmpty(folderPath))
@@ -243,6 +273,22 @@ namespace twoSaaSCore.Services
         public async IAsyncEnumerable<FileMetadata> ListFilesAsync(Guid tenantId, Guid roomId, string? folderPath = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
             folderPath = NormalizeFolderPath(folderPath);
+            var normalizedFolder = string.IsNullOrEmpty(folderPath) ? (string?)null : folderPath;
+
+            var refs = await _db.RoomFileRefs
+                .Where(r => r.TenantId == tenantId && r.RoomId == roomId && r.FolderPath == normalizedFolder)
+                .OrderByDescending(r => r.AddedUtc)
+                .ToListAsync(ct);
+
+            if (refs.Count > 0)
+            {
+                foreach (var r in refs)
+                    yield return new FileMetadata(tenantId, roomId, r.FileId, r.OriginalFileName,
+                        r.Size, r.AddedUtc, r.AddedByUserId, r.BlobName, r.ContentType);
+                yield break;
+            }
+
+            // Fallback: scan blobs for legacy files not yet in SQL
             var prefix = $"{tenantId}/{roomId}/";
             if (!string.IsNullOrEmpty(folderPath))
                 prefix += folderPath;
@@ -282,18 +328,117 @@ namespace twoSaaSCore.Services
 
         public async Task DeleteFileAsync(Guid tenantId, Guid roomId, Guid fileId, string? folderPath = null, CancellationToken ct = default)
         {
-            var meta = await GetFileAsync(tenantId, roomId, fileId, folderPath, ct);
-            if (meta == null) return;
-            await _container.DeleteBlobIfExistsAsync(meta.BlobName, DeleteSnapshotsOption.IncludeSnapshots, cancellationToken: ct);
+            var ref_ = await _db.RoomFileRefs
+                .FirstOrDefaultAsync(r => r.TenantId == tenantId && r.RoomId == roomId && r.FileId == fileId, ct);
+
+            if (ref_ != null)
+            {
+                var blobName = ref_.BlobName;
+                _db.RoomFileRefs.Remove(ref_);
+                await _db.SaveChangesAsync(ct);
+
+                // Only delete the physical blob if no other rooms reference it
+                var otherRefs = await _db.RoomFileRefs
+                    .IgnoreQueryFilters()
+                    .AnyAsync(r => r.BlobName == blobName, ct);
+                if (!otherRefs)
+                    await _container.DeleteBlobIfExistsAsync(blobName, DeleteSnapshotsOption.IncludeSnapshots, cancellationToken: ct);
+            }
+            else
+            {
+                // Fallback for legacy files
+                var meta = await GetFileAsync(tenantId, roomId, fileId, folderPath, ct);
+                if (meta != null)
+                    await _container.DeleteBlobIfExistsAsync(meta.BlobName, DeleteSnapshotsOption.IncludeSnapshots, cancellationToken: ct);
+            }
         }
 
         public async Task DeleteRoomAsync(Guid tenantId, Guid roomId, CancellationToken ct = default)
         {
+            // Remove file refs; only delete blobs with no remaining refs
+            var refs = await _db.RoomFileRefs
+                .Where(r => r.TenantId == tenantId && r.RoomId == roomId)
+                .ToListAsync(ct);
+
+            var blobNames = refs.Select(r => r.BlobName).Distinct().ToList();
+            _db.RoomFileRefs.RemoveRange(refs);
+            await _db.SaveChangesAsync(ct);
+
+            foreach (var blobName in blobNames)
+            {
+                var stillReferenced = await _db.RoomFileRefs
+                    .IgnoreQueryFilters()
+                    .AnyAsync(r => r.BlobName == blobName, ct);
+                if (!stillReferenced)
+                    await _container.DeleteBlobIfExistsAsync(blobName, DeleteSnapshotsOption.IncludeSnapshots, cancellationToken: ct);
+            }
+
+            // Delete folder markers and room marker blobs
             var prefix = $"{tenantId}/{roomId}/";
             await foreach (var blob in _container.GetBlobsAsync(prefix: prefix, cancellationToken: ct))
             {
                 await _container.DeleteBlobIfExistsAsync(blob.Name, DeleteSnapshotsOption.IncludeSnapshots, cancellationToken: ct);
             }
+        }
+
+        public async Task<RoomMetadata> CloneRoomAsync(Guid tenantId, Guid sourceRoomId, string newName, string? ndaText, string? userId, CancellationToken ct = default)
+        {
+            // Create the new room
+            var newRoom = await CreateRoomAsync(tenantId, newName, ndaText, userId, ct);
+            var newRoomId = newRoom.RoomId;
+
+            // Clone folder markers (lightweight blob copies for folder structure)
+            var sourcePrefix = $"{tenantId}/{sourceRoomId}/";
+            var destPrefix = $"{tenantId}/{newRoomId}/";
+
+            await foreach (var item in _container.GetBlobsAsync(prefix: sourcePrefix, cancellationToken: ct))
+            {
+                if (!item.Name.EndsWith($"/{FolderMarkerName}", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var relativePath = item.Name[sourcePrefix.Length..];
+                var sourceBlob = _container.GetBlobClient(item.Name);
+                var destBlob = _container.GetBlobClient(destPrefix + relativePath);
+                var copyOp = await destBlob.StartCopyFromUriAsync(sourceBlob.Uri, cancellationToken: ct);
+                await copyOp.WaitForCompletionAsync(ct);
+
+                try
+                {
+                    var srcTags = await sourceBlob.GetTagsAsync(cancellationToken: ct);
+                    var newTags = new Dictionary<string, string>(srcTags.Value.Tags)
+                    {
+                        ["roomId"] = newRoomId.ToString(),
+                        ["folderId"] = Guid.NewGuid().ToString()
+                    };
+                    await destBlob.SetTagsAsync(newTags, cancellationToken: ct);
+                }
+                catch { /* tags are best-effort */ }
+            }
+
+            // Clone file references — just INSERT new rows pointing to the SAME blobs
+            var sourceRefs = await _db.RoomFileRefs
+                .Where(r => r.TenantId == tenantId && r.RoomId == sourceRoomId)
+                .ToListAsync(ct);
+
+            foreach (var src in sourceRefs)
+            {
+                _db.RoomFileRefs.Add(new RoomFileRef
+                {
+                    TenantId = tenantId,
+                    RoomId = newRoomId,
+                    FileId = Guid.NewGuid(),
+                    BlobName = src.BlobName, // same physical blob!
+                    OriginalFileName = src.OriginalFileName,
+                    Size = src.Size,
+                    ContentType = src.ContentType,
+                    FolderPath = src.FolderPath,
+                    AddedUtc = DateTimeOffset.UtcNow,
+                    AddedByUserId = userId
+                });
+            }
+            await _db.SaveChangesAsync(ct);
+
+            return newRoom;
         }
 
         // ------------- Helpers -------------
@@ -361,7 +506,7 @@ namespace twoSaaSCore.Services
         {
             if (string.IsNullOrEmpty(original)) return "";
             var trimmed = original.Trim();
-            var encoded = Uri.EscapeDataString(trimmed);
+            var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(trimmed));
             if (encoded.Length <= MaxTagValueLength) return encoded;
 
             var ext = Path.GetExtension(trimmed);
@@ -369,21 +514,43 @@ namespace twoSaaSCore.Services
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trimmed))).ToLowerInvariant();
             var shortBase = baseName.Length > 40 ? baseName[..40] : baseName;
             var composite = $"{shortBase}~{hash[..16]}{ext}";
-            var finalEncoded = Uri.EscapeDataString(composite);
+            var finalEncoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(composite));
             return finalEncoded.Length <= MaxTagValueLength ? finalEncoded : finalEncoded[..MaxTagValueLength];
         }
 
         private static string? DecodeFileNameFromTags(IDictionary<string, string> tags)
         {
             if (!tags.TryGetValue(TagFileNameEncoded, out var enc) || string.IsNullOrEmpty(enc)) return null;
-            try { return Uri.UnescapeDataString(enc); } catch { return enc; }
+            try
+            {
+                var bytes = Convert.FromBase64String(enc);
+                return Encoding.UTF8.GetString(bytes);
+            }
+            catch
+            {
+                // Fall back to URI decoding for legacy tags
+                try { return Uri.UnescapeDataString(enc); } catch { return enc; }
+            }
+        }
+
+        private static string SanitizeForTag(string value)
+        {
+            var sb = new StringBuilder(value.Length);
+            foreach (var c in value)
+            {
+                if (char.IsLetterOrDigit(c) || c is ' ' or '+' or '-' or '.' or ':' or '=' or '_' or '/')
+                    sb.Append(c);
+                else
+                    sb.Append('_');
+            }
+            return sb.ToString();
         }
 
         private static string TruncateForTag(string value)
         {
             if (string.IsNullOrEmpty(value)) return "";
-            value = value.Trim();
-            return value.Length <= MaxTagValueLength ? value : value[..MaxTagValueLength];
+            var sanitized = SanitizeForTag(value.Trim());
+            return sanitized.Length <= MaxTagValueLength ? sanitized : sanitized[..MaxTagValueLength];
         }
 
         private sealed class MeasuringStream : Stream

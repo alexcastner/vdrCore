@@ -3,77 +3,139 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewData["Title"] - twoSaaSCore</title>
+    <title>@ViewData["Title"] - VaultRoom</title>
     <script type="importmap"></script>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/twoSaaSCore.styles.css" asp-append-version="true" />
 </head>
 <body>
-    <header>
-        <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
-            <div class="container">
-                <a class="navbar-brand" asp-area="" asp-page="/Index">twoSaaSCore</a>
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse"
-                        aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
-                    <span class="navbar-toggler-icon"></span>
-                </button>
-                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
-                    <ul class="navbar-nav flex-grow-1">
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/Index">Home</a>
+    @{
+        var isAuth = User?.Identity?.IsAuthenticated ?? false;
+        var tenantId = User?.FindFirst("tenant_id")?.Value;
+        var userName = User?.Identity?.Name ?? "";
+        var initials = userName.Length >= 2
+            ? $"{userName[0]}{userName[userName.LastIndexOf(' ') + 1]}".ToUpper()
+            : userName.Length > 0 ? userName[..1].ToUpper() : "?";
+        var currentPage = ViewContext.RouteData.Values["page"]?.ToString() ?? "";
+    }
+
+    <div class="vr-shell">
+        <!-- Sidebar backdrop (mobile) -->
+        <div class="vr-sidebar-backdrop" id="sidebarBackdrop" onclick="document.getElementById('sidebar').classList.remove('open');this.classList.remove('show');"></div>
+
+        <!-- Sidebar -->
+        <aside class="vr-sidebar" id="sidebar">
+            <a class="vr-sidebar-brand" asp-area="" asp-page="/Index">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+                VaultRoom
+            </a>
+
+            <div class="vr-sidebar-section">
+                <div class="vr-sidebar-label">Workspace</div>
+                <ul class="vr-sidebar-nav">
+                    <li>
+                        <a asp-area="" asp-page="/Files/Index" class="@(currentPage.StartsWith("/Files") ? "active" : "")">
+                            <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                            Data Rooms
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            @if (isAuth)
+            {
+                <div class="vr-sidebar-section">
+                    <div class="vr-sidebar-label">Account</div>
+                    <ul class="vr-sidebar-nav">
+                        <li>
+                            <a asp-area="Identity" asp-page="/Account/Manage/Index" class="@(currentPage.Contains("/Manage/") ? "active" : "")">
+                                <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                Profile
+                            </a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/Privacy">Privacy</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/Files/Index">Files</a>
+                        <li>
+                            <a asp-area="" asp-page="/Privacy" class="@(currentPage == "/Privacy" ? "active" : "")">
+                                <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                Privacy
+                            </a>
                         </li>
                     </ul>
-                    <partial name="_LoginPartial" />
                 </div>
-            </div>
-        </nav>
-    </header>
+            }
 
-    <div class="container">
-        @{
-            var isAuth = User?.Identity?.IsAuthenticated ?? false;
-            var tenantId = User?.FindFirst("tenant_id")?.Value;
-        }
-        @if (isAuth)
-        {
-            <div class="alert alert-info d-flex justify-content-between align-items-center small mb-3">
-                <div>
-                    <strong>Tenant Dashboard</strong>
-                    @if (!string.IsNullOrEmpty(tenantId))
+            <div class="vr-sidebar-footer">
+                @if (isAuth)
+                {
+                    <div class="vr-sidebar-user">
+                        <span class="vr-avatar">@initials</span>
+                        <div class="vr-sidebar-user-info">
+                            <span class="vr-sidebar-user-name">@userName</span>
+                            @if (!string.IsNullOrEmpty(tenantId))
+                            {
+                                <span class="vr-sidebar-user-tenant font-mono">@tenantId[..Math.Min(8, tenantId.Length)]…</span>
+                            }
+                        </div>
+                    </div>
+                    <form asp-area="Identity" asp-page="/Account/Logout" asp-route-returnUrl="@Url.Page("/Index", new { area = "" })" method="post">
+                        <button type="submit" class="vr-btn-signout">
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                            Sign out
+                        </button>
+                    </form>
+                }
+                else
+                {
+                    <div class="d-grid gap-2">
+                        <a class="btn btn-sm btn-primary" asp-area="Identity" asp-page="/Account/Login">Sign in</a>
+                        <a class="btn btn-sm btn-outline-secondary" asp-area="Identity" asp-page="/Account/Register">Register</a>
+                    </div>
+                }
+            </div>
+        </aside>
+
+        <!-- Main area -->
+        <div class="vr-main">
+            <!-- Topbar -->
+            <header class="vr-topbar">
+                <div class="vr-topbar-left">
+                    <button class="vr-sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarBackdrop').classList.toggle('show');" aria-label="Toggle sidebar">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    </button>
+                    <nav class="vr-breadcrumb" aria-label="Breadcrumb">
+                        <a asp-area="" asp-page="/Files/Index">
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                        </a>
+                        @if (ViewData["Title"] != null)
+                        {
+                            <span class="separator">/</span>
+                            <span>@ViewData["Title"]</span>
+                        }
+                    </nav>
+                </div>
+                <div class="vr-topbar-right">
+                    @if (isAuth)
                     {
-                        <span class="ms-2">Tenant Id: <code>@tenantId</code></span>
+                        <div class="vr-topbar-status">
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="var(--vr-success)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            <span>Encrypted</span>
+                        </div>
                     }
                 </div>
-                <div>
-                    <a class="btn btn-sm btn-outline-primary" asp-area="" asp-page="/Files/Index">Manage Files</a>
-                </div>
-            </div>
-        }
-        else
-        {
-            <div class="alert alert-light border small mb-3">
-                Signed out. <a asp-area="Identity" asp-page="/Account/Login">Log in</a> or
-                <a asp-area="Identity" asp-page="/Account/Register">register</a> to access tenant features.
-            </div>
-        }
+            </header>
 
-        <main role="main" class="pb-3">
-            @RenderBody()
-        </main>
-    </div>
+            <!-- Page content -->
+            <div class="vr-content">
+                <main role="main">
+                    @RenderBody()
+                </main>
+            </div>
 
-    <footer class="border-top footer text-muted">
-        <div class="container">
-            &copy; 2025 - twoSaaSCore - <a asp-area="" asp-page="/Privacy">Privacy</a>
+            <footer class="vr-footer">
+                &copy; 2025 VaultRoom &mdash; <a asp-area="" asp-page="/Privacy">Privacy</a>
+            </footer>
         </div>
-    </footer>
+    </div>
 
     <script src="~/lib/jquery/dist/jquery.min.js"></script>
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>

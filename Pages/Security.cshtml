@@ -1,0 +1,154 @@
+@page
+@model SecurityModel
+@{
+    ViewData["Title"] = "Security";
+    Layout = "_Layout.Landing";
+}
+
+<nav class="vr-landing-nav">
+    <a class="brand" href="/">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+        VaultRoom
+    </a>
+    <div class="nav-links">
+        <a asp-page="/Features">Features</a>
+        <a asp-page="/Pricing">Pricing</a>
+        <a asp-page="/Security">Security</a>
+        <a asp-page="/UseCases">Use Cases</a>
+        @if (User?.Identity?.IsAuthenticated == true)
+        {
+            <a asp-page="/Files/Index" class="btn-landing-primary" style="padding:.45rem 1.2rem;font-size:.85rem;">Dashboard</a>
+        }
+        else
+        {
+            <a asp-area="Identity" asp-page="/Account/Login">Sign in</a>
+            <a asp-area="Identity" asp-page="/Account/Register" class="btn-landing-primary" style="padding:.45rem 1.2rem;font-size:.85rem;">Start Free</a>
+        }
+    </div>
+</nav>
+
+<section class="vr-section">
+    <div class="vr-section-header">
+        <span class="eyebrow">Security</span>
+        <h2>Enterprise-grade security isn't an add-on.<br />It's the foundation.</h2>
+        <p>VaultRoom is built from the ground up for sensitive deal documents. Every feature below is included in every plan — no "premium security" upsells.</p>
+    </div>
+
+    <!-- Compliance badges -->
+    <div class="vr-badge-row">
+        <div class="vr-compliance-badge">
+            <div class="badge-icon">
+                <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <span>AES-256</span>
+        </div>
+        <div class="vr-compliance-badge">
+            <div class="badge-icon">
+                <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <span>TLS 1.3</span>
+        </div>
+        <div class="vr-compliance-badge">
+            <div class="badge-icon">
+                <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+            </div>
+            <span>MFA</span>
+        </div>
+        <div class="vr-compliance-badge">
+            <div class="badge-icon">
+                <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            </div>
+            <span>SOC 2</span>
+        </div>
+        <div class="vr-compliance-badge">
+            <div class="badge-icon">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </div>
+            <span>GDPR</span>
+        </div>
+    </div>
+
+    <!-- Security detail cards -->
+    <div class="vr-security-grid">
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <h4>Encryption at Rest</h4>
+            <p>All files are encrypted with AES-256 via Azure Blob Storage service-side encryption. Encryption keys are managed through Azure Key Vault with automatic rotation.</p>
+        </div>
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <h4>Encryption in Transit</h4>
+            <p>Every connection uses TLS 1.3 with strong cipher suites. HSTS is enforced. No data ever travels unencrypted between your browser and our servers.</p>
+        </div>
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            </div>
+            <h4>Multi-Factor Authentication</h4>
+            <p>Authenticator app (TOTP) and SMS-based MFA. Administrators can enforce MFA organization-wide. Lockout after 5 failed attempts.</p>
+        </div>
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
+            </div>
+            <h4>Dynamic Watermarking</h4>
+            <p>Documents rendered with per-viewer watermarks containing user ID, tenant ID, and UTC timestamp. Creates a forensic evidence trail for every page view.</p>
+        </div>
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+            <h4>Immutable Audit Ledger</h4>
+            <p>Every action — upload, download, view, deletion, login, permission change — is recorded in a tamper-proof SQL ledger with cryptographic integrity.</p>
+        </div>
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-2"/></svg>
+            </div>
+            <h4>Tenant Isolation</h4>
+            <p>Every tenant's data is logically isolated by tenant ID at every layer — storage, database queries, API access, and audit logs. No cross-tenant data leakage.</p>
+        </div>
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </div>
+            <h4>Access Controls</h4>
+            <p>Room-level and folder-level permissions. Time-limited SAS tokens for file access. Every link expires — no permanent download URLs.</p>
+        </div>
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            </div>
+            <h4>SOC 2 &amp; GDPR</h4>
+            <p>Infrastructure designed for SOC 2 Type II and GDPR compliance. Data residency options available. Right-to-deletion supported for individual records.</p>
+        </div>
+        <div class="vr-security-card">
+            <div class="sec-icon">
+                <svg viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+            </div>
+            <h4>MD5 Integrity Verification</h4>
+            <p>Client-side MD5 hashing before upload with server-side verification. Duplicate detection prevents redundant uploads and ensures file integrity.</p>
+        </div>
+    </div>
+</section>
+
+<div class="vr-cta-banner">
+    <h2>Security you can trust, pricing you can afford</h2>
+    <p>Every security feature is included in every plan. No "premium security" upsells.</p>
+    <a asp-area="Identity" asp-page="/Account/Register" class="btn-cta">Start Free →</a>
+</div>
+
+<footer class="vr-landing-footer">
+    <div class="footer-links">
+        <a asp-page="/Features">Features</a>
+        <a asp-page="/Pricing">Pricing</a>
+        <a asp-page="/Security">Security</a>
+        <a asp-page="/UseCases">Use Cases</a>
+        <a asp-page="/Privacy">Privacy</a>
+    </div>
+    &copy; 2025 VaultRoom. All rights reserved.
+</footer>

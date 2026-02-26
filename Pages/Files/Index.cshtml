@@ -1,175 +1,280 @@
 @page
 @model twoSaaSCore.Pages.Files.IndexModel
+@using twoSaaSCore.Models
 @{
     var inRoom = Model.RoomId.HasValue && Model.RoomId.Value != Guid.Empty;
-    var folderPath = Model.FolderPath ?? "";              // normalized (expected to end with / or empty)
+    var folderPath = Model.FolderPath ?? "";
     var hasFolder = !string.IsNullOrEmpty(folderPath);
     string CrumbLink(string fp) => Url.Page("./Index", new { roomId = Model.RoomId, folderPath = fp });
-    ViewData["Title"] = inRoom ? "Room Contents" : "Rooms";
+    ViewData["Title"] = inRoom ? "Room" : "Data Rooms";
+
+    var perms = Model.CurrentPermissions;
+    var canUpload = perms.HasFlag(RoomPermission.Upload);
+    var canDeleteFiles = perms.HasFlag(RoomPermission.DeleteFiles);
+    var canManageFolders = perms.HasFlag(RoomPermission.ManageFolders);
+    var canManageRoom = perms.HasFlag(RoomPermission.ManageRoom);
+    var canManagePermissions = perms.HasFlag(RoomPermission.ManagePermissions);
+    var canViewDocs = perms.HasFlag(RoomPermission.ViewDocuments);
+    var canDownload = perms.HasFlag(RoomPermission.Download);
+    var canViewAuditLog = perms.HasFlag(RoomPermission.ViewAuditLog);
+
+    string HumanSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024d:0.#} KB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / 1024d / 1024d:0.##} MB";
+        return $"{bytes / 1024d / 1024d / 1024d:0.##} GB";
+    }
+
+    string TimeAgo(DateTimeOffset dt)
+    {
+        var diff = DateTimeOffset.UtcNow - dt;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalHours < 1) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalDays < 1) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 30) return $"{(int)diff.TotalDays}d ago";
+        return dt.ToString("MMM d, yyyy");
+    }
+
+    string ExtBadge(string fileName)
+    {
+        var ext = System.IO.Path.GetExtension(fileName).ToLowerInvariant().TrimStart('.');
+        return ext switch
+        {
+            "pdf" => "vr-badge-pdf",
+            "xlsx" or "xls" => "vr-badge-xlsx",
+            "docx" or "doc" => "vr-badge-docx",
+            _ => "vr-badge-file"
+        };
+    }
 }
 
 @if (!inRoom)
 {
-    <h2 class="mb-3">Rooms</h2>
-
-    <div class="card mb-4">
-        <div class="card-header py-2">
-            <strong>Create Room</strong>
-        </div>
-        <div class="card-body">
-            <form method="post" asp-page-handler="CreateRoom" class="row g-2">
-                @Html.AntiForgeryToken()
-                <div class="col-md-4">
-                    <input name="name" class="form-control form-control-sm" placeholder="Room name" maxlength="160" required />
-                </div>
-                <div class="col-md-6">
-                    <input name="ndaText" class="form-control form-control-sm" placeholder="Optional NDA text" />
-                </div>
-                <div class="col-md-2 d-grid">
-                    <button class="btn btn-sm btn-primary">Create</button>
-                </div>
-            </form>
+    <!-- ============ ROOMS LIST ============ -->
+    <div class="vr-page-header">
+        <div>
+            <h1 class="vr-page-title">Data Rooms</h1>
+            <p class="vr-page-subtitle">Secure workspaces for sharing confidential documents.</p>
         </div>
     </div>
 
+    <!-- Create room inline -->
+    @if (Model.CanCreateRooms)
+    {
+    <div class="vr-action-bar">
+        <form method="post" asp-page-handler="CreateRoom" class="vr-inline-form">
+            @Html.AntiForgeryToken()
+            <div class="vr-inline-form-group">
+                <input name="name" class="form-control form-control-sm" placeholder="New room name…" maxlength="160" required />
+                <input name="ndaText" class="form-control form-control-sm" placeholder="NDA text (optional)" />
+                <button class="btn btn-sm btn-primary">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Create Room
+                </button>
+            </div>
+        </form>
+    </div>
+    }
+
     @if (Model.Rooms.Count == 0)
     {
-        <div class="alert alert-info">No rooms yet.</div>
+        <div class="vr-empty-state">
+            <div class="vr-empty-icon">
+                <svg viewBox="0 0 24 24" width="48" height="48" stroke="var(--vr-text-light)" fill="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <h3>No data rooms yet</h3>
+            <p>Create your first room above to start sharing documents securely.</p>
+        </div>
     }
     else
     {
-        <table class="table table-sm align-middle">
-            <thead>
-            <tr>
-                <th>Name</th>
-                <th>Created (UTC)</th>
-                <th style="width:140px;"></th>
-            </tr>
-            </thead>
-            <tbody>
+        <div class="vr-room-grid">
             @foreach (var r in Model.Rooms.OrderByDescending(r => r.CreatedUtc))
             {
-                <tr>
-                    <td>
-                        <a asp-page="./Index" asp-route-roomId="@r.RoomId">@r.Name</a><br />
-                        <small class="text-muted">@r.RoomId</small>
-                    </td>
-                    <td>@r.CreatedUtc.ToString("u")</td>
-                    <td class="text-end">
-                        <form method="post" asp-page-handler="DeleteRoom" asp-route-roomId="@r.RoomId" onsubmit="return confirm('Delete room and ALL contents?');" class="d-inline">
+                <div class="vr-room-card">
+                    <a asp-page="./Index" asp-route-roomId="@r.RoomId" class="vr-room-card-link">
+                        <div class="vr-room-card-icon">
+                            <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+                        </div>
+                        <div class="vr-room-card-body">
+                            <h3>@r.Name</h3>
+                            <span class="vr-room-card-meta">Created @TimeAgo(r.CreatedUtc)</span>
+                        </div>
+                    </a>
+                    <div class="vr-room-card-actions">
+                        <form method="post" asp-page-handler="DeleteRoom" asp-route-roomId="@r.RoomId" onsubmit="return confirm('Delete room «@r.Name» and ALL its contents? This cannot be undone.');">
                             @Html.AntiForgeryToken()
-                            <button class="btn btn-sm btn-outline-danger">Delete</button>
+                            <button class="vr-icon-btn vr-icon-btn-danger" title="Delete room">
+                                <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            </button>
                         </form>
-                    </td>
-                </tr>
+                    </div>
+                </div>
             }
-            </tbody>
-        </table>
+        </div>
     }
 }
 else
 {
-    <div class="d-flex flex-wrap justify-content-between align-items-start mb-3 gap-2">
+    @if (Model.ShowNda)
+    {
+        <!-- ============ NDA ACCEPTANCE GATE ============ -->
+        <div style="max-width: 640px; margin: 3rem auto; text-align: center;">
+            <div style="background: var(--vr-bg-card, #fff); border: 1px solid var(--vr-border, #e5e7eb); border-radius: 12px; padding: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+                <svg viewBox="0 0 24 24" width="40" height="40" stroke="var(--vr-primary, #4f46e5)" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 1rem;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <h2 style="font-size: 1.3rem; font-weight: 700; margin-bottom: 0.5rem;">Non-Disclosure Agreement</h2>
+                <p style="color: var(--vr-text-light); font-size: 0.9rem; margin-bottom: 1rem;">You must accept the NDA before accessing <strong>@Model.RoomName</strong>.</p>
+                <div style="background: var(--vr-bg, #f9fafb); border: 1px solid var(--vr-border, #e5e7eb); border-radius: 8px; padding: 1.25rem; max-height: 280px; overflow-y: auto; text-align: left; font-size: 0.88rem; line-height: 1.65; margin-bottom: 1.25rem; white-space: pre-wrap;">@Model.NdaText</div>
+                <form method="post" asp-page-handler="AcceptNda">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="roomId" value="@Model.RoomId" />
+                    <button class="btn btn-primary" style="padding: 0.6rem 2rem; font-weight: 600;">
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px; margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
+                        I Accept the NDA
+                    </button>
+                </form>
+            </div>
+        </div>
+    }
+    else
+    {
+    <!-- ============ ROOM CONTENTS ============ -->
+    <div class="vr-page-header">
         <div>
-            <a asp-page="./Index" class="btn btn-sm btn-link px-0">&laquo; Rooms</a>
-            <h2 class="d-inline-block ms-2">Room</h2>
-            <div><small class="text-muted">RoomId: @Model.RoomId</small></div>
-
-            <nav class="mt-2" aria-label="breadcrumb">
-                <ol class="breadcrumb mb-1">
-                    <li class="breadcrumb-item">
-                        <a href="@CrumbLink("")">/</a>
-                    </li>
-                    @{
-                        // Render folder path breadcrumbs
-                        if (hasFolder)
+            <a asp-page="./Index" class="vr-back-link">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                All Rooms
+            </a>
+            <h1 class="vr-page-title">Room</h1>
+            <nav class="vr-path-breadcrumb" aria-label="Folder path">
+                <a href="@CrumbLink("")" class="vr-path-segment">
+                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    Root
+                </a>
+                @if (hasFolder)
+                {
+                    var segments = folderPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    var agg = "";
+                    for (int i = 0; i < segments.Length; i++)
+                    {
+                        agg += segments[i] + "/";
+                        var isLast = i == segments.Length - 1;
+                        <span class="vr-path-sep">/</span>
+                        if (!isLast)
                         {
-                            var segments = folderPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                            var agg = "";
-                            for (int i = 0; i < segments.Length; i++)
-                            {
-                                agg += segments[i] + "/";
-                                var isLast = i == segments.Length - 1;
-                                <li class="breadcrumb-item @(isLast ? "active" : "")" @(isLast ? "aria-current=\"page\"" : "")>
-                                    @if (!isLast)
-                                    {
-                                        <a href="@CrumbLink(agg)">@segments[i]</a>
-                                    }
-                                    else
-                                    {
-                                        @segments[i]
-                                    }
-                                </li>
-                            }
+                            <a href="@CrumbLink(agg)" class="vr-path-segment">@segments[i]</a>
+                        }
+                        else
+                        {
+                            <span class="vr-path-segment vr-path-current">@segments[i]</span>
                         }
                     }
-                </ol>
+                }
             </nav>
         </div>
-        <div class="d-flex gap-2">
-            <form method="post" asp-page-handler="DeleteRoom" asp-route-roomId="@Model.RoomId" onsubmit="return confirm('Delete entire room and all blobs?');">
-                @Html.AntiForgeryToken()
-                <button class="btn btn-sm btn-outline-danger">Delete Room</button>
-            </form>
+        <div class="vr-page-header-actions">
+            <a asp-page="./QA" asp-route-roomId="@Model.RoomId" class="btn btn-sm btn-outline-secondary" title="Questions & Answers">
+                <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                Q&amp;A
+            </a>
+            @if (canViewAuditLog)
+            {
+                <a asp-page="./AuditLog" asp-route-roomId="@Model.RoomId" class="btn btn-sm btn-outline-secondary" title="Audit Trail">
+                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    Audit Log
+                </a>
+            }
+            @if (canManageRoom)
+            {
+                <form method="post" asp-page-handler="CloneRoom" asp-route-roomId="@Model.RoomId" onsubmit="return confirm('Clone this room? All folders and files will be copied to a new room.');">
+                    @Html.AntiForgeryToken()
+                    <button class="btn btn-sm btn-outline-secondary">
+                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                        Clone Room
+                    </button>
+                </form>
+                <form method="post" asp-page-handler="DeleteRoom" asp-route-roomId="@Model.RoomId" onsubmit="return confirm('Delete entire room and all files? This cannot be undone.');">
+                    @Html.AntiForgeryToken()
+                    <button class="btn btn-sm btn-outline-danger">
+                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        Delete Room
+                    </button>
+                </form>
+            }
         </div>
     </div>
 
-    <div class="row g-3 mb-4">
-        <!-- Create Folder -->
-        <div class="col-xl-4 col-lg-5">
-            <div class="card h-100">
-                <div class="card-header py-2"><strong>New Folder</strong></div>
-                <div class="card-body">
-                    <form method="post" asp-page-handler="CreateFolder" class="row g-2">
-                        @Html.AntiForgeryToken()
-                        <input type="hidden" name="roomId" value="@Model.RoomId" />
-                        <input type="hidden" name="parentPath" value="@folderPath" />
-                        <div class="col-7">
-                            <input name="folderName" class="form-control form-control-sm" maxlength="64" placeholder="Folder name" required />
-                        </div>
-                        <div class="col-5 d-grid">
-                            <button class="btn btn-sm btn-primary">Create</button>
-                        </div>
-                    </form>
+    <!-- Action toolbar -->
+    @if (canManageFolders)
+    {
+        <div class="vr-action-bar">
+            <form method="post" asp-page-handler="CreateFolder" class="vr-inline-form">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="roomId" value="@Model.RoomId" />
+                <input type="hidden" name="parentPath" value="@folderPath" />
+                <div class="vr-inline-form-group">
+                    <input name="folderName" class="form-control form-control-sm" maxlength="64" placeholder="New folder name…" required />
+                    <button class="btn btn-sm btn-outline-primary">
+                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                        Add Folder
+                    </button>
                 </div>
-            </div>
+            </form>
         </div>
+    }
 
-        <!-- Small Upload -->
-        <div class="col-xl-4 col-lg-3">
-            <div class="card h-100">
-                <div class="card-header py-2"><strong>Upload (Small)</strong></div>
-                <div class="card-body">
-                    <form method="post" enctype="multipart/form-data" asp-page-handler="Upload">
-                        @Html.AntiForgeryToken()
-                        <input type="hidden" name="roomId" value="@Model.RoomId" />
-                        <input type="hidden" name="folderPath" value="@folderPath" />
-                        <div class="mb-2">
-                            <input type="file" name="file" class="form-control form-control-sm" required />
-                        </div>
-                        <button class="btn btn-sm btn-primary">Upload</button>
-                    </form>
-                </div>
+    <!-- Upload zone -->
+    @if (canUpload)
+    {
+    <div class="vr-upload-zone" id="uploadZone">
+        <div class="vr-upload-zone-inner">
+            <!-- Unified file picker -->
+            <div class="vr-upload-form-row">
+                <label class="vr-upload-file-label" for="uploadFile">
+                    <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <span id="uploadFileLabel">Choose file or drag here</span>
+                </label>
+                <input type="file" id="uploadFile" class="vr-upload-file-input" />
+                <button class="btn btn-sm btn-primary" id="uploadBtn" disabled>Upload</button>
             </div>
-        </div>
 
-        <!-- Large Upload -->
-        <div class="col-xl-4 col-lg-4">
-            <div class="card h-100">
-                <div class="card-header py-2"><strong>Large Upload</strong></div>
-                <div class="card-body">
-                    <div class="mb-2">
-                        <input type="file" id="largeFile" class="form-control form-control-sm" />
-                    </div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-4">
+            <!-- Route indicator -->
+            <div class="vr-upload-route-notice" id="uploadRouteNotice" style="display:none">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span id="uploadRouteText"></span>
+            </div>
+
+            <!-- Quick upload form (hidden, submitted programmatically) -->
+            <form method="post" enctype="multipart/form-data" asp-page-handler="Upload" id="quickUploadForm" style="display:none">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="roomId" value="@Model.RoomId" />
+                <input type="hidden" name="folderPath" value="@folderPath" />
+                <input type="file" name="file" id="quickFile" />
+            </form>
+
+            <!-- Hidden elements for large-upload.js binding -->
+            <input type="file" id="largeFile" style="display:none" />
+            <button id="startLargeUpload" style="display:none"
+                    data-room-id="@Model.RoomId"
+                    data-folder-path="@folderPath"></button>
+
+            <!-- Large upload (auto-expanded when needed, or manually via toggle) -->
+            <details class="vr-large-upload-details" id="largeUploadDetails">
+                <summary class="vr-large-upload-toggle">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Advanced options
+                </summary>
+                <div class="vr-large-upload-body">
+                    <div class="vr-upload-options">
+                        <div>
                             <label class="form-label mb-1 small">Concurrency</label>
                             <select id="concurrency" class="form-select form-select-sm">
                                 <option>1</option><option>2</option><option selected>4</option><option>8</option>
                                 <option>16</option><option>32</option><option>64</option>
                             </select>
                         </div>
-                        <div class="col-4">
+                        <div>
                             <label class="form-label mb-1 small">Init (MB)</label>
                             <select id="initialSize" class="form-select form-select-sm">
                                 <option value="0" selected>Auto</option>
@@ -177,7 +282,7 @@ else
                                 <option value="64">64</option>
                             </select>
                         </div>
-                        <div class="col-4">
+                        <div>
                             <label class="form-label mb-1 small">Block (MB)</label>
                             <select id="blockSize" class="form-select form-select-sm">
                                 <option value="4">4</option><option value="8" selected>8</option><option value="16">16</option>
@@ -185,141 +290,485 @@ else
                             </select>
                         </div>
                     </div>
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-sm btn-success" id="startLargeUpload"
-                                data-room-id="@Model.RoomId"
-                                data-folder-path="@folderPath">Start</button>
-                        <button class="btn btn-sm btn-outline-secondary" id="cancelUpload" disabled>Cancel</button>
-                    </div>
-                    <div class="progress mt-2" style="height:20px; display:none" id="progWrap">
-                        <div class="progress-bar" id="progBar" role="progressbar" style="width:0%">0%</div>
-                    </div>
-                    <div class="small text-muted mt-1" id="uploadStatus"></div>
-                    <div class="mt-2" id="metricsContainer" style="display:none">
-                        <details>
-                            <summary class="small">Metrics</summary>
-                            <pre class="small mb-0" id="metricsText"></pre>
-                        </details>
-                    </div>
+                </div>
+            </details>
+
+            <!-- Large upload controls (shown when large route is active) -->
+            <div id="largeUploadControls" style="display:none">
+                <div class="d-flex gap-2 mt-2">
+                    <button class="btn btn-sm btn-outline-secondary" id="cancelUpload" disabled>Cancel</button>
+                </div>
+                <div class="progress mt-2" style="height:20px; display:none" id="progWrap">
+                    <div class="progress-bar" id="progBar" role="progressbar" style="width:0%"></div>
+                </div>
+                <div class="small text-muted mt-1" id="uploadStatus"></div>
+                <div class="mt-2" id="metricsContainer" style="display:none">
+                    <details>
+                        <summary class="small">Metrics</summary>
+                        <pre class="small mb-0 font-mono" id="metricsText"></pre>
+                    </details>
                 </div>
             </div>
         </div>
     </div>
-
-    <!-- Folders list -->
-    <h5 class="mt-3">Folders</h5>
-    @if (Model.Folders.Count == 0)
-    {
-        <div class="text-muted small mb-3">No subfolders.</div>
-    }
-    else
-    {
-        <table class="table table-sm align-middle mb-4">
-            <thead>
-            <tr>
-                <th>Name</th>
-                <th>Created (UTC)</th>
-                <th style="width:160px;"></th>
-            </tr>
-            </thead>
-            <tbody>
-            @foreach (var f in Model.Folders.OrderBy(x => x.Name))
-            {
-                var subPath = f.Path; // Already normalized with trailing /
-                <tr>
-                    <td>
-                        <a asp-page="./Index"
-                           asp-route-roomId="@Model.RoomId"
-                           asp-route-folderPath="@subPath">@f.Name</a>
-                        <br /><small class="text-muted">@subPath</small>
-                    </td>
-                    <td>@f.CreatedUtc.ToString("u")</td>
-                    <td class="text-end">
-                        <form method="post"
-                              asp-page-handler="DeleteFolder"
-                              asp-route-roomId="@Model.RoomId"
-                              asp-route-folderPath="@subPath"
-                              onsubmit="return confirm('Delete folder (non-recursive)?');"
-                              class="d-inline">
-                            @Html.AntiForgeryToken()
-                            <button class="btn btn-sm btn-outline-danger">Delete</button>
-                        </form>
-                        <form method="post"
-                              asp-page-handler="DeleteFolder"
-                              asp-route-roomId="@Model.RoomId"
-                              asp-route-folderPath="@subPath"
-                              asp-route-recursive="true"
-                              onsubmit="return confirm('Delete folder and ALL contents?');"
-                              class="d-inline ms-1">
-                            @Html.AntiForgeryToken()
-                            <button class="btn btn-sm btn-danger">Recursive</button>
-                        </form>
-                    </td>
-                </tr>
-            }
-            </tbody>
-        </table>
     }
 
-    <!-- Files list -->
-    <h5 class="mt-3">Files @(hasFolder ? $"in {folderPath}" : "(root)")</h5>
-    @if (Model.Files.Count == 0)
-    {
-        <div class="alert alert-info">No files here.</div>
-    }
-    else
-    {
-        <table class="table table-sm align-middle">
-            <thead>
-            <tr>
-                <th>File Name</th>
-                <th class="text-end">Size (MB)</th>
-                <th>Uploaded (UTC)</th>
-                <th>By</th>
-                <th style="width:180px;"></th>
-            </tr>
-            </thead>
-            <tbody>
-            @foreach (var f in Model.Files.OrderByDescending(f => f.UploadedUtc))
+    <!-- File browser -->
+    <form method="post" asp-page="./DownloadFile" asp-page-handler="Bulk" id="bulkActionForm">
+    <input type="hidden" name="roomId" value="@Model.RoomId" />
+    <input type="hidden" name="folderPath" value="@folderPath" />
+    <div class="vr-file-browser">
+        @if ((canDownload || canDeleteFiles) && Model.Files.Count > 0)
+        {
+            <div style="margin-bottom: 0.75rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                @if (canDownload)
                 {
-                    var isPdf = System.IO.Path.GetExtension(f.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
-                    var isDocx = System.IO.Path.GetExtension(f.FileName).Equals(".docx", StringComparison.OrdinalIgnoreCase);
-                    var isXlsx = System.IO.Path.GetExtension(f.FileName).Equals(".xlsx", StringComparison.OrdinalIgnoreCase);
+                <button type="submit" class="btn btn-sm btn-outline-primary" id="bulkDownloadBtn" disabled>
+                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download Selected as ZIP
+                </button>
+                }
+                @if (canDeleteFiles)
+                {
+                <button type="button" class="btn btn-sm btn-outline-danger" id="bulkDeleteBtn" disabled
+                        data-action="@($"{Url.Page("./Index")}?handler=BulkDelete")">
+                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    Delete Selected
+                </button>
+                }
+                <label style="font-size: 0.8rem; color: var(--vr-text-light); cursor: pointer; display: flex; align-items: center; gap: 0.3rem;">
+                    <input type="checkbox" id="selectAllFiles" /> Select all
+                </label>
+            </div>
+        }
+        @if (Model.Folders.Count > 0 || Model.Files.Count > 0)
+        {
+            <table class="table table-sm align-middle vr-file-table">
+                <thead>
                 <tr>
-                    <td>@f.FileName<br /><small class="text-muted">@f.FileId</small></td>
-                    <td class="text-end">@((f.Size / 1024d / 1024d).ToString("0.00"))</td>
-                    <td>@f.UploadedUtc.ToString("u")</td>
-                    <td>@f.UploadedBy</td>
-                        <td class="text-end d-flex gap-1 justify-content-end">
-                            @if (isPdf)
-                            {
-                                <a class="btn btn-sm btn-outline-primary"
-                                   asp-page="/Files/ViewPdf"
-                                   asp-route-roomId="@Model.RoomId"
-                                   asp-route-fileId="@f.FileId"
-                                   target="_blank">View</a>
-                            }
-                            else if (isDocx || isXlsx)
-                            {
-                                <a class="btn btn-sm btn-outline-primary"
-                                   asp-page="/Files/ViewDocument"
-                                   asp-route-roomId="@Model.RoomId"
-                                   asp-route-fileId="@f.FileId"
-                                   target="_blank">View</a>
-                            }
-                            <form method="post" ...>
-                                <!-- existing delete form unchanged -->
-                                @Html.AntiForgeryToken()
-                                <button class="btn btn-sm btn-outline-danger">Delete</button>
-                            </form>
-                        </td>
+                    @if (canDownload || canDeleteFiles)
+                    {
+                        <th style="width: 32px;"></th>
+                    }
+                    <th>Name</th>
+                    <th class="vr-col-size">Size</th>
+                    <th class="vr-col-date">Modified</th>
+                    <th class="vr-col-user">By</th>
+                    <th class="vr-col-actions"></th>
                 </tr>
+                </thead>
+                <tbody>
+                @foreach (var f in Model.Folders.OrderBy(x => x.Name))
+                {
+                    var subPath = f.Path;
+                    <tr class="vr-row-folder">
+                        @if (canDownload || canDeleteFiles)
+                        {
+                            <td></td>
+                        }
+                        <td>
+                            <a asp-page="./Index"
+                               asp-route-roomId="@Model.RoomId"
+                               asp-route-folderPath="@subPath"
+                               class="vr-file-name">
+                                <span class="vr-file-icon vr-file-icon-folder">
+                                    <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                </span>
+                                @f.Name
+                            </a>
+                        </td>
+                        <td class="vr-col-size vr-text-secondary">—</td>
+                        <td class="vr-col-date vr-text-secondary">@TimeAgo(f.CreatedUtc)</td>
+                        <td class="vr-col-user vr-text-secondary">@f.CreatedBy</td>
+                        <td class="vr-col-actions">
+                            @if (canManageFolders)
+                            {
+                            <div class="vr-row-actions">
+                                <form method="post"
+                                      asp-page-handler="DeleteFolder"
+                                      asp-route-roomId="@Model.RoomId"
+                                      asp-route-folderPath="@subPath"
+                                      onsubmit="return confirm('Delete empty folder «@f.Name»?');">
+                                    @Html.AntiForgeryToken()
+                                    <button class="vr-icon-btn vr-icon-btn-danger" title="Delete empty folder">
+                                        <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                    </button>
+                                </form>
+                                <form method="post"
+                                      asp-page-handler="DeleteFolder"
+                                      asp-route-roomId="@Model.RoomId"
+                                      asp-route-folderPath="@subPath"
+                                      asp-route-recursive="true"
+                                      onsubmit="return confirm('Delete folder «@f.Name» and ALL contents? This cannot be undone.');">
+                                    @Html.AntiForgeryToken()
+                                    <button class="vr-icon-btn vr-icon-btn-danger" title="Delete folder and all contents">
+                                        <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                                    </button>
+                                </form>
+                            </div>
+                            }
+                        </td>
+                    </tr>
+                }
+                @foreach (var f in Model.Files.OrderByDescending(f => f.UploadedUtc))
+                {
+                    var ext = System.IO.Path.GetExtension(f.FileName).ToLowerInvariant();
+                    var isPdf = ext == ".pdf";
+                    var isDocx = ext is ".docx" or ".doc";
+                    var isXlsx = ext is ".xlsx" or ".xls";
+                    var canView = canViewDocs && (isPdf || isDocx || isXlsx);
+                    <tr class="vr-row-file">
+                        @if (canDownload || canDeleteFiles)
+                        {
+                            <td style="text-align: center;"><input type="checkbox" name="fileIds" value="@f.FileId" class="bulk-file-cb" /></td>
+                        }
+                        <td>
+                            <div class="vr-file-name">
+                                <span class="@ExtBadge(f.FileName)">@ext.TrimStart('.')</span>
+                                <span>@f.FileName</span>
+                            </div>
+                        </td>
+                        <td class="vr-col-size font-mono">@HumanSize(f.Size)</td>
+                        <td class="vr-col-date vr-text-secondary" title="@f.UploadedUtc.ToString("u")">@TimeAgo(f.UploadedUtc)</td>
+                        <td class="vr-col-user vr-text-secondary">@f.UploadedBy</td>
+                        <td class="vr-col-actions">
+                            <div class="vr-row-actions">
+                                @if (canView)
+                                {
+                                    <a class="vr-icon-btn" title="View document"
+                                       asp-page="@(isPdf ? "/Files/ViewPdf" : "/Files/ViewDocument")"
+                                       asp-route-roomId="@Model.RoomId"
+                                       asp-route-fileId="@f.FileId"
+                                       target="_blank">
+                                        <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                    </a>
+                                }
+                                @if (canDownload)
+                                {
+                                    <a class="vr-icon-btn" title="Download (watermarked)"
+                                       asp-page="/Files/DownloadFile"
+                                       asp-route-roomId="@Model.RoomId"
+                                       asp-route-fileId="@f.FileId"
+                                       asp-route-folderPath="@folderPath">
+                                        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                    </a>
+                                }
+                                @if (canDeleteFiles)
+                                {
+                                <form method="post"
+                                      asp-page-handler="DeleteFile"
+                                      asp-route-roomId="@Model.RoomId"
+                                      asp-route-fileId="@f.FileId"
+                                      onsubmit="return confirm('Delete «@f.FileName»? This cannot be undone.');">
+                                    @Html.AntiForgeryToken()
+                                    <button class="vr-icon-btn vr-icon-btn-danger" title="Delete file">
+                                        <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                    </button>
+                                </form>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <div class="vr-empty-state vr-empty-state-sm">
+                <div class="vr-empty-icon">
+                    <svg viewBox="0 0 24 24" width="36" height="36" stroke="var(--vr-text-light)" fill="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </div>
+                <h3>No files yet</h3>
+                <p>@(canUpload ? "Upload a file or create a folder to get started." : "No documents available in this location.")</p>
+            </div>
+        }
+    </div>
+    </form>
+
+    @* ============ MEMBERS & INVITATIONS ============ *@
+    @if (canManagePermissions)
+    {
+        <div class="vr-section" style="margin-top: 2rem;">
+            <h2 class="vr-section-title">
+                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px; margin-right: 6px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Members &amp; Invitations
+            </h2>
+
+            @* --- Invite Link Flash --- *@
+            @if (TempData["InviteLink"] is string invLink)
+            {
+                <div class="alert alert-success" style="margin-bottom: 1rem;">
+                    <strong>Invitation sent to @TempData["InviteEmail"]!</strong>
+                    <p class="mb-1" style="font-size: 0.85rem;">Share this link with the user:</p>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input type="text" class="form-control form-control-sm" value="@invLink" readonly id="inviteLinkInput" style="font-family: monospace; font-size: 0.8rem;" />
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="navigator.clipboard.writeText(document.getElementById('inviteLinkInput').value); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy',2000);">Copy</button>
+                    </div>
+                </div>
             }
-            </tbody>
-        </table>
+
+            @* --- Invite Form --- *@
+            <div style="background: var(--vr-bg-card, #fff); border: 1px solid var(--vr-border, #e5e7eb); border-radius: 10px; padding: 1.25rem; margin-bottom: 1.5rem;">
+                <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem;">Invite User</h3>
+                <form method="post" asp-page-handler="InviteUser" class="vr-inline-form">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="roomId" value="@Model.RoomId" />
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <label class="form-label" style="font-size: 0.8rem;">Email address</label>
+                            <input name="email" type="email" class="form-control form-control-sm" placeholder="user@example.com" required />
+                        </div>
+                        <div style="min-width: 130px;">
+                            <label class="form-label" style="font-size: 0.8rem;">Role</label>
+                            <select name="role" class="form-select form-select-sm">
+                                <option value="Viewer">Viewer</option>
+                                <option value="Downloader">Downloader</option>
+                                <option value="Editor">Editor</option>
+                                <option value="Admin">Admin</option>
+                            </select>
+                        </div>
+                        <div style="flex: 1; min-width: 160px;">
+                            <label class="form-label" style="font-size: 0.8rem;">Message (optional)</label>
+                            <input name="message" class="form-control form-control-sm" placeholder="Personal note…" maxlength="500" />
+                        </div>
+                        <button class="btn btn-sm btn-primary" style="height: 31px;">
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 3px;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                            Invite
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            @* --- Current Members --- *@
+            @if (Model.Members.Count > 0)
+            {
+                <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.5rem;">Current Members</h3>
+                <div class="table-responsive" style="margin-bottom: 1.5rem;">
+                    <table class="vr-file-table">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Role</th>
+                                <th>Granted</th>
+                                <th style="width: 180px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @{
+                            var currentUserId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+                        }
+                        @foreach (var m in Model.Members)
+                        {
+                            var isSelf = m.UserId == currentUserId;
+                            <tr>
+                                <td>@(m.Email ?? m.UserId)</td>
+                                <td><span class="badge bg-secondary">@m.Role</span></td>
+                                <td style="font-size: 0.82rem; color: var(--vr-text-light);">@TimeAgo(m.GrantedUtc)</td>
+                                <td>
+                                    @if (!isSelf)
+                                    {
+                                        <div style="display: flex; gap: 0.35rem; align-items: center;">
+                                            <form method="post" asp-page-handler="ChangeMemberRole" style="display:flex; gap:0.25rem; align-items:center;">
+                                                @Html.AntiForgeryToken()
+                                                <input type="hidden" name="roomId" value="@Model.RoomId" />
+                                                <input type="hidden" name="memberId" value="@m.UserId" />
+                                                <select name="role" class="form-select form-select-sm" style="width: auto; font-size: 0.78rem;">
+                                                    @foreach (var rv in new[] { RoomRole.Viewer, RoomRole.Downloader, RoomRole.Editor, RoomRole.Admin, RoomRole.Owner })
+                                                    {
+                                                        <option value="@rv" selected="@(m.Role == rv)">@rv</option>
+                                                    }
+                                                </select>
+                                                <button class="btn btn-sm btn-outline-secondary" style="font-size: 0.75rem; padding: 2px 8px;">Save</button>
+                                            </form>
+                                            <form method="post" asp-page-handler="RemoveMember" onsubmit="return confirm('Remove this member from the room?');">
+                                                @Html.AntiForgeryToken()
+                                                <input type="hidden" name="roomId" value="@Model.RoomId" />
+                                                <input type="hidden" name="memberId" value="@m.UserId" />
+                                                <button class="vr-icon-btn vr-icon-btn-danger" title="Remove member" style="width: 26px; height: 26px;">
+                                                    <svg viewBox="0 0 24 24" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-light text-dark" style="font-size: 0.75rem;">You</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            @* --- Pending Invitations --- *@
+            @if (Model.PendingInvitations.Count > 0)
+            {
+                <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.5rem;">Pending Invitations</h3>
+                <div class="table-responsive">
+                    <table class="vr-file-table">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Role</th>
+                                <th>Sent</th>
+                                <th>Expires</th>
+                                <th style="width: 80px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var inv in Model.PendingInvitations)
+                        {
+                            <tr>
+                                <td>@inv.Email</td>
+                                <td><span class="badge bg-info text-dark">@inv.Role</span></td>
+                                <td style="font-size: 0.82rem; color: var(--vr-text-light);">@TimeAgo(inv.CreatedUtc)</td>
+                                <td style="font-size: 0.82rem; color: var(--vr-text-light);">@inv.ExpiresUtc.ToString("MMM d, yyyy")</td>
+                                <td>
+                                    <form method="post" asp-page-handler="RevokeInvite" onsubmit="return confirm('Revoke this invitation?');">
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="roomId" value="@Model.RoomId" />
+                                        <input type="hidden" name="invitationId" value="@inv.Id" />
+                                        <button class="btn btn-sm btn-outline-warning" style="font-size: 0.75rem; padding: 2px 8px;">Revoke</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
     }
+    } @* end NDA else *@
 }
 
 @section Scripts {
     <script type="module" src="/js/large-upload.js"></script>
+    <script>
+        (function() {
+            var zone = document.getElementById('uploadZone');
+            if (!zone) return;
+
+            var LARGE_THRESHOLD = 25 * 1024 * 1024; // 25 MB
+
+            var uploadFile   = document.getElementById('uploadFile');
+            var uploadBtn    = document.getElementById('uploadBtn');
+            var fileLbl      = document.getElementById('uploadFileLabel');
+            var routeNotice  = document.getElementById('uploadRouteNotice');
+            var routeText    = document.getElementById('uploadRouteText');
+            var quickForm    = document.getElementById('quickUploadForm');
+            var quickFile    = document.getElementById('quickFile');
+            var lgDetails    = document.getElementById('largeUploadDetails');
+            var lgControls   = document.getElementById('largeUploadControls');
+            var useLarge     = false;
+
+            function formatSize(b) {
+                if (b < 1024) return b + ' B';
+                if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+                if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+                return (b/1073741824).toFixed(2) + ' GB';
+            }
+
+            function onFileSelected() {
+                if (!uploadFile.files.length) {
+                    uploadBtn.disabled = true;
+                    fileLbl.textContent = 'Choose file or drag here';
+                    routeNotice.style.display = 'none';
+                    lgControls.style.display = 'none';
+                    return;
+                }
+                var file = uploadFile.files[0];
+                fileLbl.textContent = file.name + ' (' + formatSize(file.size) + ')';
+                uploadBtn.disabled = false;
+
+                useLarge = file.size > LARGE_THRESHOLD;
+                routeNotice.style.display = 'flex';
+
+                if (useLarge) {
+                    routeText.textContent = 'File exceeds 25 MB — will use direct-to-cloud upload with progress tracking, MD5 verification, and resumability.';
+                    routeNotice.className = 'vr-upload-route-notice vr-route-large';
+                    lgDetails.open = true;
+                    lgControls.style.display = 'block';
+                } else {
+                    routeText.textContent = 'File under 25 MB — will use quick server upload.';
+                    routeNotice.className = 'vr-upload-route-notice vr-route-quick';
+                    lgControls.style.display = 'none';
+                }
+            }
+
+            uploadFile.addEventListener('change', onFileSelected);
+
+            uploadBtn.addEventListener('click', function() {
+                if (!uploadFile.files.length) return;
+
+                if (useLarge) {
+                    // Transfer file to large upload input and trigger its start button
+                    var largeFile = document.getElementById('largeFile');
+                    if (largeFile) {
+                        largeFile.files = uploadFile.files;
+                    }
+                    var startBtn = document.getElementById('startLargeUpload');
+                    if (startBtn) {
+                        uploadBtn.disabled = true;
+                        startBtn.click();
+                    }
+                } else {
+                    // Transfer file to hidden quick form and submit
+                    quickFile.files = uploadFile.files;
+                    uploadBtn.disabled = true;
+                    uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Uploading…';
+                    quickForm.submit();
+                }
+            });
+
+            // Drag-and-drop
+            ['dragenter','dragover'].forEach(function(e) {
+                zone.addEventListener(e, function(ev) { ev.preventDefault(); zone.classList.add('drag-over'); });
+            });
+            ['dragleave','drop'].forEach(function(e) {
+                zone.addEventListener(e, function(ev) { ev.preventDefault(); zone.classList.remove('drag-over'); });
+            });
+            zone.addEventListener('drop', function(ev) {
+                if (ev.dataTransfer.files.length) {
+                    uploadFile.files = ev.dataTransfer.files;
+                    onFileSelected();
+                    uploadBtn.click();
+                }
+            });
+        })();
+
+        // Bulk action select-all / enable buttons + delete handler
+        (function() {
+            var selectAll = document.getElementById('selectAllFiles');
+            var dlBtn = document.getElementById('bulkDownloadBtn');
+            var delBtn = document.getElementById('bulkDeleteBtn');
+            if (!selectAll) return;
+
+            var cbs = document.querySelectorAll('.bulk-file-cb');
+            function updateBtns() {
+                var any = false;
+                cbs.forEach(function(c) { if (c.checked) any = true; });
+                if (dlBtn) dlBtn.disabled = !any;
+                if (delBtn) delBtn.disabled = !any;
+            }
+            selectAll.addEventListener('change', function() {
+                cbs.forEach(function(c) { c.checked = selectAll.checked; });
+                updateBtns();
+            });
+            cbs.forEach(function(c) { c.addEventListener('change', updateBtns); });
+
+            // Delete button: override form action and submit
+            if (delBtn) {
+                delBtn.addEventListener('click', function() {
+                    if (!confirm('Delete selected files? This cannot be undone.')) return;
+                    var form = document.getElementById('bulkActionForm');
+                    form.action = this.getAttribute('data-action');
+                    form.submit();
+                });
+            }
+        })();
+    </script>
 }

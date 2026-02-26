@@ -10,6 +10,7 @@ namespace twoSaaSCore.Models
         public Guid? RoomId { get; set; }
         public Guid? FileId { get; set; }
         public string? UserId { get; set; }
+        public string? UserEmail { get; set; }
         public string Action { get; set; } = default!;
         public string? FileName { get; set; }
         public long? FileSize { get; set; }

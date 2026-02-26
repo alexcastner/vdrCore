@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using twoSaaSCore.Data;
 
@@ -11,9 +12,11 @@ using twoSaaSCore.Data;
 namespace twoSaaSCore.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260226210324_AddNdaAndQA")]
+    partial class AddNdaAndQA
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -301,63 +304,6 @@ namespace twoSaaSCore.Data.Migrations
                     b.HasIndex("QuestionId");
 
                     b.ToTable("RoomAnswers");
-                });
-
-            modelBuilder.Entity("twoSaaSCore.Models.RoomFileRef", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("AddedByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTimeOffset>("AddedUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("BlobName")
-                        .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("nvarchar(1024)");
-
-                    b.Property<string>("ContentType")
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
-                    b.Property<Guid>("FileId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("FolderPath")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("OriginalFileName")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<Guid>("RoomId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<long>("Size")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "BlobName");
-
-                    b.HasIndex("TenantId", "RoomId", "FileId")
-                        .IsUnique();
-
-                    b.HasIndex("TenantId", "RoomId", "FolderPath");
-
-                    b.ToTable("RoomFileRefs");
                 });
 
             modelBuilder.Entity("twoSaaSCore.Models.RoomInvitation", b =>

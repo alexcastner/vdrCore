@@ -31,7 +31,7 @@ builder.Services.Configure<AzureBlobOptions>(builder.Configuration.GetSection("A
 builder.Services.AddSingleton<IFileStorage, AzureBlobFileStorage>();
 
 builder.Services.Configure<AzureBlobOptions>(builder.Configuration.GetSection("AzureBlob"));
-builder.Services.AddSingleton<IRoomFileCatalog, BlobRoomFileCatalog>();
+builder.Services.AddScoped<IRoomFileCatalog, BlobRoomFileCatalog>();
 builder.Services.AddDefaultIdentity<ApplicationUser>(options =>
     {
         options.SignIn.RequireConfirmedAccount = true;
@@ -45,6 +45,9 @@ builder.Services.AddDefaultIdentity<ApplicationUser>(options =>
 builder.Services.AddScoped<RequireAnyMfaFilter>();
 
 builder.Services.AddScoped<IAuditLogger, SqlLedgerAuditLogger>();
+builder.Services.AddScoped<IRoomPermissionService, RoomPermissionService>();
+builder.Services.AddScoped<IRoomInvitationService, RoomInvitationService>();
+builder.Services.AddScoped<IRoomQaService, RoomQaService>();
 
 // Register SMS sender (Twilio when enabled, otherwise no-op)
 var twilioSection = builder.Configuration.GetSection("Twilio");

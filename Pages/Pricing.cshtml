@@ -1,0 +1,136 @@
+@page
+@model PricingModel
+@{
+    ViewData["Title"] = "Pricing";
+    Layout = "_Layout.Landing";
+}
+
+<nav class="vr-landing-nav">
+    <a class="brand" href="/">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+        VaultRoom
+    </a>
+    <div class="nav-links">
+        <a asp-page="/Features">Features</a>
+        <a asp-page="/Pricing">Pricing</a>
+        <a asp-page="/Security">Security</a>
+        <a asp-page="/UseCases">Use Cases</a>
+        @if (User?.Identity?.IsAuthenticated == true)
+        {
+            <a asp-page="/Files/Index" class="btn-landing-primary" style="padding:.45rem 1.2rem;font-size:.85rem;">Dashboard</a>
+        }
+        else
+        {
+            <a asp-area="Identity" asp-page="/Account/Login">Sign in</a>
+            <a asp-area="Identity" asp-page="/Account/Register" class="btn-landing-primary" style="padding:.45rem 1.2rem;font-size:.85rem;">Start Free</a>
+        }
+    </div>
+</nav>
+
+<section class="vr-section">
+    <div class="vr-section-header">
+        <span class="eyebrow">Pricing</span>
+        <h2>Flat-rate. No surprises. No per-page fees.</h2>
+        <p>Every plan includes unlimited users, unlimited rooms, and full security features. Pick the storage tier that fits your deal flow.</p>
+    </div>
+
+    <div class="vr-pricing-grid">
+        <!-- Starter -->
+        <div class="vr-price-card">
+            <div class="tier-name">Starter</div>
+            <div class="price">$49<span>/mo</span></div>
+            <div class="price-note">Billed monthly · No contract</div>
+            <ul>
+                <li>Up to 10 GB storage</li>
+                <li>Unlimited users</li>
+                <li>Unlimited rooms</li>
+                <li>Watermarked PDF viewing</li>
+                <li>MFA &amp; AES-256 encryption</li>
+                <li>Immutable audit trail</li>
+                <li>Email support</li>
+            </ul>
+            <a asp-area="Identity" asp-page="/Account/Register" class="btn-tier btn-tier-outline">Start Free</a>
+        </div>
+
+        <!-- Professional -->
+        <div class="vr-price-card featured">
+            <div class="tier-name">Professional</div>
+            <div class="price">$149<span>/mo</span></div>
+            <div class="price-note">Billed monthly · Cancel anytime</div>
+            <ul>
+                <li>Up to 100 GB storage</li>
+                <li>Unlimited users</li>
+                <li>Unlimited rooms</li>
+                <li>Watermarked PDF, DOCX, XLSX viewing</li>
+                <li>Large file upload (100 GB per file)</li>
+                <li>Custom subdomain</li>
+                <li>Full audit export (CSV/JSON)</li>
+                <li>Priority email support</li>
+            </ul>
+            <a asp-area="Identity" asp-page="/Account/Register" class="btn-tier btn-tier-primary">Start Free</a>
+        </div>
+
+        <!-- Enterprise -->
+        <div class="vr-price-card">
+            <div class="tier-name">Enterprise</div>
+            <div class="price">$399<span>/mo</span></div>
+            <div class="price-note">Billed annually · Volume discounts</div>
+            <ul>
+                <li>1 TB+ storage</li>
+                <li>Unlimited users</li>
+                <li>Unlimited rooms</li>
+                <li>All Professional features</li>
+                <li>SOC 2 Type II report</li>
+                <li>SSO / SAML integration</li>
+                <li>Custom NDA per room</li>
+                <li>Dedicated account manager</li>
+                <li>99.9% SLA</li>
+            </ul>
+            <a href="mailto:sales@vaultroom.io" class="btn-tier btn-tier-outline">Contact Sales</a>
+        </div>
+    </div>
+</section>
+
+<!-- No hidden fees callout -->
+<section class="vr-section" style="background:var(--vr-bg);padding-top:0;">
+    <div class="vr-section-header">
+        <h2>Zero hidden fees. We mean it.</h2>
+        <p>No setup fees. No per-page charges. No overage penalties. No archive fees. No "premium security" add-ons. The price you see is the price you pay.</p>
+    </div>
+    <div class="vr-comparison">
+        <table>
+            <thead>
+                <tr>
+                    <th>Fee type</th>
+                    <th class="highlight">VaultRoom</th>
+                    <th>Legacy VDRs</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Setup / onboarding fee</td><td class="highlight"><span class="check">$0</span></td><td><span class="cross">$500–$5,000</span></td></tr>
+                <tr><td>Per-page upload fee</td><td class="highlight"><span class="check">$0</span></td><td><span class="cross">$0.25–$0.85/page</span></td></tr>
+                <tr><td>Per-user seat fee</td><td class="highlight"><span class="check">$0</span></td><td><span class="cross">$15–$50/user/mo</span></td></tr>
+                <tr><td>Storage overage</td><td class="highlight"><span class="check">Included</span></td><td><span class="cross">$0.50–$2/GB</span></td></tr>
+                <tr><td>Archive / retrieval fee</td><td class="highlight"><span class="check">$0</span></td><td><span class="cross">Varies</span></td></tr>
+                <tr><td>Watermarking add-on</td><td class="highlight"><span class="check">Included</span></td><td><span class="cross">$50–$200/mo</span></td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<div class="vr-cta-banner">
+    <h2>Start your first deal room today</h2>
+    <p>No credit card required. Set up in under 2 minutes.</p>
+    <a asp-area="Identity" asp-page="/Account/Register" class="btn-cta">Create Free Room →</a>
+</div>
+
+<footer class="vr-landing-footer">
+    <div class="footer-links">
+        <a asp-page="/Features">Features</a>
+        <a asp-page="/Pricing">Pricing</a>
+        <a asp-page="/Security">Security</a>
+        <a asp-page="/UseCases">Use Cases</a>
+        <a asp-page="/Privacy">Privacy</a>
+    </div>
+    &copy; 2025 VaultRoom. All rights reserved.
+</footer>

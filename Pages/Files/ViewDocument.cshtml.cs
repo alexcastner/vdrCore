@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Syncfusion.DocIO;
@@ -10,7 +11,9 @@ using Syncfusion.XlsIORenderer;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Claims;
 using System.Threading.Tasks;
+using twoSaaSCore.Models;
 using twoSaaSCore.Services;
 
 namespace twoSaaSCore.Pages.Files
@@ -22,15 +25,19 @@ namespace twoSaaSCore.Pages.Files
         private readonly IRoomFileCatalog _catalog;
         private readonly IFileStorage _storage;
         private readonly IAuditLogger _auditLogger;
+        private readonly IRoomPermissionService _permissions;
+        private readonly UserManager<ApplicationUser> _userManager;
 
         private const long MaxOfficeBytesForConversion = 25 * 1024 * 1024; // shared cap
 
-        public ViewDocumentModel(ITenantProvider tenantProvider, IRoomFileCatalog catalog, IFileStorage storage, IAuditLogger auditLogger)
+        public ViewDocumentModel(ITenantProvider tenantProvider, IRoomFileCatalog catalog, IFileStorage storage, IAuditLogger auditLogger, IRoomPermissionService permissions, UserManager<ApplicationUser> userManager)
         {
             _tenantProvider = tenantProvider;
             _catalog = catalog;
             _storage = storage;
             _auditLogger = auditLogger;
+            _permissions = permissions;
+            _userManager = userManager;
         }
 
         [BindProperty(SupportsGet = true)]
@@ -47,6 +54,10 @@ namespace twoSaaSCore.Pages.Files
             if (RoomId == Guid.Empty || FileId == Guid.Empty) return BadRequest();
             var tenantId = _tenantProvider.GetTenantId();
             if (tenantId == Guid.Empty) return Forbid();
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+            if (!await _permissions.HasPermissionAsync(tenantId, RoomId, userId, RoomPermission.ViewDocuments))
+                return Forbid();
 
             var metadata = await _catalog.GetFileAsync(tenantId, RoomId, FileId);
             if (metadata == null) return NotFound();
@@ -122,12 +133,15 @@ namespace twoSaaSCore.Pages.Files
                 return StatusCode(500, "Failed to generate SAS for cached PDF.");
             }
 
+            var userEmail = (await _userManager.FindByIdAsync(userId))?.Email;
+
             await _auditLogger.LogAsync(new AuditEntry(
                 tenantId,
                 RoomId,
                 FileId,
                 "View",
-                User.Identity?.Name,
+                userId,
+                userEmail,
                 FileName,
                 metadata.Size,
                 null,//metadata.HashSha256, // if you store it; else null

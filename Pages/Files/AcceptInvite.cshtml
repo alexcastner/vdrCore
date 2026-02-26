@@ -1,0 +1,72 @@
+@page
+@model twoSaaSCore.Pages.Files.AcceptInviteModel
+@{
+    ViewData["Title"] = "Room Invitation";
+}
+
+<div style="max-width: 520px; margin: 3rem auto;">
+    <div class="vr-page-header" style="margin-bottom: 1.5rem;">
+        <div>
+            <h1 class="vr-page-title">
+                <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px; margin-right: 6px;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                Data Room Invitation
+            </h1>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-warning">
+            <strong>@Model.ErrorMessage</strong>
+        </div>
+        @if (Model.RoomId.HasValue)
+        {
+            <a asp-page="/Files/Index" asp-route-roomId="@Model.RoomId" class="btn btn-sm btn-primary mt-2">Go to Room</a>
+        }
+    }
+    else if (Model.Accepted)
+    {
+        <div class="alert alert-success">
+            <strong>@Model.SuccessMessage</strong>
+        </div>
+        @if (Model.RoomId.HasValue)
+        {
+            <a asp-page="/Files/Index" asp-route-roomId="@Model.RoomId" class="btn btn-primary mt-2">Open Data Room</a>
+        }
+    }
+    else if (Model.ShowAcceptButton)
+    {
+        <div style="background: var(--vr-bg-card, #fff); border: 1px solid var(--vr-border, #e5e7eb); border-radius: 12px; padding: 2rem;">
+            @if (!string.IsNullOrEmpty(Model.InviterEmail))
+            {
+                <p class="mb-2 vr-text-secondary"><strong>@Model.InviterEmail</strong> has invited you to a data room.</p>
+            }
+            else
+            {
+                <p class="mb-2 vr-text-secondary">You've been invited to a data room.</p>
+            }
+
+            <p class="mb-2">
+                <strong>Role:</strong>
+                <span class="badge bg-primary">@Model.RoomRole</span>
+            </p>
+
+            @if (!string.IsNullOrEmpty(Model.InviteMessage))
+            {
+                <div style="background: var(--vr-bg-subtle, #f8f9fa); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem;">
+                    <small class="vr-text-secondary">Message:</small>
+                    <p class="mb-0" style="white-space: pre-wrap;">@Model.InviteMessage</p>
+                </div>
+            }
+
+            <form method="post" class="mt-3">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="token" value="@Model.Token" />
+                <button class="btn btn-primary">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    Accept Invitation
+                </button>
+            </form>
+        </div>
+    }
+</div>

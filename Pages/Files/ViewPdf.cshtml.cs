@@ -1,8 +1,12 @@
 using System;
+using System.IO;
+using System.Security.Claims;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using twoSaaSCore.Models;
 using twoSaaSCore.Services;
 
 namespace twoSaaSCore.Pages.Files
@@ -12,11 +16,17 @@ namespace twoSaaSCore.Pages.Files
     {
         private readonly ITenantProvider _tenantProvider;
         private readonly IRoomFileCatalog _catalog;
+        private readonly IRoomPermissionService _permissions;
+        private readonly IAuditLogger _auditLogger;
+        private readonly UserManager<ApplicationUser> _userManager;
 
-        public ViewPdfModel(ITenantProvider tenantProvider, IRoomFileCatalog catalog)
+        public ViewPdfModel(ITenantProvider tenantProvider, IRoomFileCatalog catalog, IRoomPermissionService permissions, IAuditLogger auditLogger, UserManager<ApplicationUser> userManager)
         {
             _tenantProvider = tenantProvider;
             _catalog = catalog;
+            _permissions = permissions;
+            _auditLogger = auditLogger;
+            _userManager = userManager;
         }
 
         [BindProperty(SupportsGet = true)]
@@ -35,6 +45,10 @@ namespace twoSaaSCore.Pages.Files
             var tenantId = _tenantProvider.GetTenantId();
             if (tenantId == Guid.Empty) return Forbid();
 
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+            if (!await _permissions.HasPermissionAsync(tenantId, RoomId, userId, RoomPermission.ViewDocuments))
+                return Forbid();
+
             var metadata = await _catalog.GetFileAsync(tenantId, RoomId, FileId);
             if (metadata == null) return NotFound();
             if (!IsPdf(Uri.UnescapeDataString(metadata.OriginalFileName), metadata.ContentType))
@@ -51,6 +65,16 @@ namespace twoSaaSCore.Pages.Files
             {
                 return StatusCode(500, "Failed to generate SAS.");
             }
+
+            var userEmail = (await _userManager.FindByIdAsync(userId))?.Email;
+
+            await _auditLogger.LogAsync(new AuditEntry(
+                tenantId, RoomId, FileId, "View", userId, userEmail,
+                FileName, metadata.Size, null,
+                Path.GetExtension(FileName)?.ToLowerInvariant(),
+                HttpContext.Connection.RemoteIpAddress?.ToString(),
+                Request.Headers.UserAgent.ToString().Truncate(256),
+                _auditLogger.NewCorrelationId(), null));
 
             return Page();
         }

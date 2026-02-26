@@ -1,0 +1,111 @@
+@page
+@model UseCasesModel
+@{
+    ViewData["Title"] = "Use Cases";
+    Layout = "_Layout.Landing";
+}
+
+<nav class="vr-landing-nav">
+    <a class="brand" href="/">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+        VaultRoom
+    </a>
+    <div class="nav-links">
+        <a asp-page="/Features">Features</a>
+        <a asp-page="/Pricing">Pricing</a>
+        <a asp-page="/Security">Security</a>
+        <a asp-page="/UseCases">Use Cases</a>
+        @if (User?.Identity?.IsAuthenticated == true)
+        {
+            <a asp-page="/Files/Index" class="btn-landing-primary" style="padding:.45rem 1.2rem;font-size:.85rem;">Dashboard</a>
+        }
+        else
+        {
+            <a asp-area="Identity" asp-page="/Account/Login">Sign in</a>
+            <a asp-area="Identity" asp-page="/Account/Register" class="btn-landing-primary" style="padding:.45rem 1.2rem;font-size:.85rem;">Start Free</a>
+        }
+    </div>
+</nav>
+
+<section class="vr-section">
+    <div class="vr-section-header">
+        <span class="eyebrow">Use Cases</span>
+        <h2>Built for teams that handle<br />sensitive documents every day.</h2>
+        <p>From capital raises to board governance, VaultRoom gives you a secure, organized workspace — without the six-figure contract or 30-day onboarding.</p>
+    </div>
+
+    <div class="vr-usecase-grid">
+        <!-- Fundraising -->
+        <div class="vr-usecase-card">
+            <div class="uc-icon uc-blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+            </div>
+            <h3>Fundraising &amp; Capital Raises</h3>
+            <p class="scenario">You're raising a Series B and need to share financials, cap tables, and legal documents with 15 prospective investors — each with different access levels and NDA status.</p>
+            <div class="how-helps">
+                <strong>How VaultRoom helps:</strong> Create a single fundraising room, organize by diligence category, and assign per-folder permissions to each investor group. Dynamic watermarks on every document view tie back to the individual viewer. Track exactly which investors opened which files and for how long — all from a real-time audit dashboard.
+            </div>
+        </div>
+
+        <!-- M&A Due Diligence -->
+        <div class="vr-usecase-card">
+            <div class="uc-icon uc-green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/>
+                </svg>
+            </div>
+            <h3>M&amp;A Due Diligence</h3>
+            <p class="scenario">Your company is going through an acquisition. The buy-side needs to review hundreds of contracts, IP filings, and HR records — and your legal team needs airtight control over what's visible at each stage.</p>
+            <div class="how-helps">
+                <strong>How VaultRoom helps:</strong> Structure your data room with a standard M&amp;A index (financial, legal, tax, HR, IP). Gate folders by deal phase so documents are revealed progressively. Every download and view is logged in an immutable audit ledger — giving your counsel a defensible record of what was disclosed and when.
+            </div>
+        </div>
+
+        <!-- Legal Document Review -->
+        <div class="vr-usecase-card">
+            <div class="uc-icon uc-purple">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+                </svg>
+            </div>
+            <h3>Legal Document Review</h3>
+            <p class="scenario">Your firm manages sensitive case files, contracts, and regulatory filings for multiple clients. Each client's documents must be completely isolated, and outside counsel needs temporary, scoped access.</p>
+            <div class="how-helps">
+                <strong>How VaultRoom helps:</strong> Each client gets a dedicated room with full tenant isolation — no cross-client data leakage at any layer. Invite outside counsel with time-limited access and per-folder permissions. Watermarked PDF viewing means every page is stamped with the viewer's identity. When the engagement ends, revoke access instantly.
+            </div>
+        </div>
+
+        <!-- Board Communications -->
+        <div class="vr-usecase-card">
+            <div class="uc-icon uc-amber">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+                </svg>
+            </div>
+            <h3>Board Communications</h3>
+            <p class="scenario">You need to distribute board books, financial reports, and strategic plans to directors before quarterly meetings. Materials are highly confidential and must not be forwarded or downloaded without authorization.</p>
+            <div class="how-helps">
+                <strong>How VaultRoom helps:</strong> Upload board materials to a dedicated governance room. Directors view documents in-browser with watermarks — no downloads needed. The audit trail shows exactly who reviewed which materials and when, giving your corporate secretary a complete governance record. Rotate materials each quarter without managing email attachments.
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="vr-cta-banner">
+    <h2>Your use case. Your rules. Our security.</h2>
+    <p>Set up your first data room in under 2 minutes — no sales call required.</p>
+    <a asp-area="Identity" asp-page="/Account/Register" class="btn-cta">Start Free →</a>
+</div>
+
+<footer class="vr-landing-footer">
+    <div class="footer-links">
+        <a asp-page="/Features">Features</a>
+        <a asp-page="/Pricing">Pricing</a>
+        <a asp-page="/Security">Security</a>
+        <a asp-page="/UseCases">Use Cases</a>
+        <a asp-page="/Privacy">Privacy</a>
+    </div>
+    &copy; 2025 VaultRoom. All rights reserved.
+</footer>

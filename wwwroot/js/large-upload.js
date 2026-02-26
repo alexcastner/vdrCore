@@ -56,6 +56,9 @@ import SparkMD5 from 'https://cdn.jsdelivr.net/npm/spark-md5@3.0.2/+esm';
   let abortController = null;
   cancelBtn.addEventListener('click',()=>{ if(abortController){ abortController.abort(); status.textContent='Cancellation requested...'; cancelBtn.disabled=true; } });
 
+  const lgControls = document.getElementById('largeUploadControls');
+  const uploadBtn = document.getElementById('uploadBtn');
+
   btn.addEventListener('click', async ()=>{
     const file=fileInput.files[0]; if(!file){ status.textContent='Select a file first.'; return; }
     const concurrency=parseInt(concSel.value,10);
@@ -66,6 +69,8 @@ import SparkMD5 from 'https://cdn.jsdelivr.net/npm/spark-md5@3.0.2/+esm';
     if(blockSize>100*1024*1024){ status.textContent='Block size must be <=100MB'; return; }
 
     btn.disabled=true; cancelBtn.disabled=false; progWrap.style.display='block'; progBar.style.width='0%'; progBar.textContent='0%'; metricsContainer.style.display='none'; metricsText.textContent='';
+    if(lgControls) lgControls.style.display='block';
+    if(uploadBtn) { uploadBtn.disabled=true; uploadBtn.innerHTML='<span class="spinner-border spinner-border-sm" role="status"></span> Uploading…'; }
 
     let md5;
     try{
@@ -169,6 +174,7 @@ import SparkMD5 from 'https://cdn.jsdelivr.net/npm/spark-md5@3.0.2/+esm';
       }
     } finally {
       btn.disabled=false; cancelBtn.disabled=true; abortController=null;
+      if(uploadBtn) { uploadBtn.disabled=false; uploadBtn.textContent='Upload'; }
     }
   });
 })();

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
+using twoSaaSCore.Models;
 
 namespace twoSaaSCore.Services
 {
@@ -10,6 +12,7 @@ namespace twoSaaSCore.Services
         Guid? FileId,
         string Action,
         string? UserId,
+        string? UserEmail,
         string? FileName,
         long? FileSize,
         string? FileSha256,
@@ -23,5 +26,6 @@ namespace twoSaaSCore.Services
     {
         Task LogAsync(AuditEntry entry);
         Guid NewCorrelationId() => Guid.NewGuid();
+        Task<List<DocumentAuditLog>> ListAsync(Guid tenantId, Guid roomId, int skip = 0, int take = 100, CancellationToken ct = default);
     }
 }

@@ -8,9 +8,13 @@ using System.Security.Cryptography;
 using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using twoSaaSCore.Data;
+using twoSaaSCore.Models;
 using twoSaaSCore.Services;
 
 namespace twoSaaSCore.Pages.Files
@@ -21,14 +25,29 @@ namespace twoSaaSCore.Pages.Files
         private readonly ITenantProvider _tenantProvider;
         private readonly IRoomFileCatalog _catalog;
         private readonly AzureBlobOptions _blobOptions;
+        private readonly IRoomPermissionService _permissions;
+        private readonly IRoomInvitationService _invitations;
+        private readonly UserManager<ApplicationUser> _userManager;
+        private readonly ApplicationDbContext _db;
+        private readonly IAuditLogger _auditLogger;
 
         public IndexModel(ITenantProvider tenantProvider,
                           IRoomFileCatalog catalog,
-                          IOptions<AzureBlobOptions> blobOptions)
+                          IOptions<AzureBlobOptions> blobOptions,
+                          IRoomPermissionService permissions,
+                          IRoomInvitationService invitations,
+                          UserManager<ApplicationUser> userManager,
+                          ApplicationDbContext db,
+                          IAuditLogger auditLogger)
         {
             _tenantProvider = tenantProvider;
             _catalog = catalog;
             _blobOptions = blobOptions.Value;
+            _permissions = permissions;
+            _invitations = invitations;
+            _userManager = userManager;
+            _db = db;
+            _auditLogger = auditLogger;
         }
 
         // Query parameters
@@ -46,6 +65,39 @@ namespace twoSaaSCore.Pages.Files
 
         // Files (in current folder or root of room)
         public List<FileRow> Files { get; private set; } = new();
+
+        // Effective permissions for current user in this room/folder
+        public RoomPermission CurrentPermissions { get; private set; } = RoomPermission.None;
+
+        // Members and invitations (populated when ManagePermissions)
+        public List<MemberRow> Members { get; private set; } = new();
+        public List<InviteRow> PendingInvitations { get; private set; } = new();
+        public string? InviteLinkGenerated { get; set; }
+
+        // NDA gate
+        public bool ShowNda { get; private set; }
+        public string? NdaText { get; private set; }
+        public string? RoomName { get; private set; }
+
+        // Room creation permission (Editor+ or no rooms yet)
+        public bool CanCreateRooms { get; private set; }
+
+        public class MemberRow
+        {
+            public string UserId { get; set; } = string.Empty;
+            public string? Email { get; set; }
+            public RoomRole Role { get; set; }
+            public DateTimeOffset GrantedUtc { get; set; }
+        }
+
+        public class InviteRow
+        {
+            public int Id { get; set; }
+            public string Email { get; set; } = string.Empty;
+            public RoomRole Role { get; set; }
+            public DateTimeOffset CreatedUtc { get; set; }
+            public DateTimeOffset ExpiresUtc { get; set; }
+        }
 
         public class RoomRow
         {
@@ -73,28 +125,63 @@ namespace twoSaaSCore.Pages.Files
             public string BlobName { get; set; } = string.Empty;
         }
 
-        public async Task OnGetAsync()
+        private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+
+        public async Task<IActionResult> OnGetAsync()
         {
             var tenantId = _tenantProvider.GetTenantId();
-            if (tenantId == Guid.Empty) return;
+            if (tenantId == Guid.Empty) return Page();
 
             if (RoomId == null || RoomId == Guid.Empty)
             {
-                // List rooms
+                // List only rooms the user has access to
+                var accessibleRoomIds = await _permissions.ListAccessibleRoomIdsAsync(tenantId, GetUserId());
                 await foreach (var r in _catalog.ListRoomsAsync(tenantId))
                 {
-                    Rooms.Add(new RoomRow
+                    if (accessibleRoomIds.Contains(r.RoomId))
                     {
-                        RoomId = r.RoomId,
-                        Name = r.Name,
-                        CreatedUtc = r.CreatedUtc
-                    });
+                        Rooms.Add(new RoomRow
+                        {
+                            RoomId = r.RoomId,
+                            Name = r.Name,
+                            CreatedUtc = r.CreatedUtc
+                        });
+                    }
                 }
-                return;
+
+                // Allow room creation for Editors, Admins, Owners — or if no rooms exist yet
+                var highestRole = await _db.RoomMembers
+                    .Where(m => m.TenantId == tenantId && m.UserId == GetUserId() && m.FolderPath == null)
+                    .Select(m => (RoomRole?)m.Role)
+                    .MaxAsync() ?? RoomRole.None;
+                CanCreateRooms = highestRole >= RoomRole.Editor || Rooms.Count == 0;
+
+                return Page();
             }
 
             // Normalize FolderPath (catalog expects trailing slash or empty)
             FolderPath = NormalizeFolderPath(FolderPath);
+
+            // Check room access
+            var userId = GetUserId();
+            CurrentPermissions = await _permissions.GetEffectivePermissionsAsync(tenantId, RoomId.Value, userId, FolderPath);
+            if (!CurrentPermissions.HasFlag(RoomPermission.AccessRoom))
+                return Forbid();
+
+            // NDA gate: check if room has NDA text and user has accepted
+            var roomMeta = await _catalog.GetRoomAsync(tenantId, RoomId.Value);
+            RoomName = roomMeta?.Name;
+            if (!string.IsNullOrWhiteSpace(roomMeta?.NdaText))
+            {
+                var accepted = await _db.NdaAcceptances
+                    .AnyAsync(n => n.TenantId == tenantId && n.RoomId == RoomId.Value && n.UserId == userId);
+                if (!accepted)
+                {
+                    ShowNda = true;
+                    NdaText = roomMeta.NdaText;
+                    return Page();
+                }
+            }
 
             // List folders (immediate children)
             await foreach (var vf in _catalog.ListVirtualFoldersAsync(tenantId, RoomId.Value, FolderPath))
@@ -122,6 +209,38 @@ namespace twoSaaSCore.Pages.Files
                     BlobName = fm.BlobName
                 });
             }
+
+            // Load members & pending invitations for permission managers
+            if (CurrentPermissions.HasFlag(RoomPermission.ManagePermissions))
+            {
+                var members = await _permissions.ListMembersAsync(tenantId, RoomId.Value);
+                foreach (var m in members.Where(m => string.IsNullOrEmpty(m.FolderPath)))
+                {
+                    var user = await _userManager.FindByIdAsync(m.UserId);
+                    Members.Add(new MemberRow
+                    {
+                        UserId = m.UserId,
+                        Email = user?.Email,
+                        Role = m.Role,
+                        GrantedUtc = m.GrantedUtc
+                    });
+                }
+
+                var invites = await _invitations.ListPendingInvitationsAsync(tenantId, RoomId.Value);
+                foreach (var inv in invites)
+                {
+                    PendingInvitations.Add(new InviteRow
+                    {
+                        Id = inv.Id,
+                        Email = inv.Email,
+                        Role = inv.Role,
+                        CreatedUtc = inv.CreatedUtc,
+                        ExpiresUtc = inv.ExpiresUtc
+                    });
+                }
+            }
+
+            return Page();
         }
 
         // ----- Room Handlers -----
@@ -130,8 +249,22 @@ namespace twoSaaSCore.Pages.Files
         {
             var tenantId = _tenantProvider.GetTenantId();
             if (tenantId == Guid.Empty || string.IsNullOrWhiteSpace(name)) return BadRequest();
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            await _catalog.CreateRoomAsync(tenantId, name.Trim(), ndaText, userId);
+            var userId = GetUserId();
+
+            // Only Editors, Admins, and Owners can create rooms — unless no rooms exist yet
+            var highestRole = await _db.RoomMembers
+                .Where(m => m.TenantId == tenantId && m.UserId == userId && m.FolderPath == null)
+                .Select(m => (RoomRole?)m.Role)
+                .MaxAsync() ?? RoomRole.None;
+            var anyRoomsExist = await _db.RoomMembers.AnyAsync(m => m.TenantId == tenantId);
+            if (highestRole < RoomRole.Editor && anyRoomsExist)
+                return Forbid();
+
+            var room = await _catalog.CreateRoomAsync(tenantId, name.Trim(), ndaText, userId);
+
+            // Auto-grant Owner to the creator
+            await _permissions.GrantAccessAsync(tenantId, room.RoomId, userId, RoomRole.Owner, userId);
+
             return RedirectToPage(new { roomId = (Guid?)null });
         }
 
@@ -140,6 +273,10 @@ namespace twoSaaSCore.Pages.Files
             if (roomId == Guid.Empty) return BadRequest();
             var tenantId = _tenantProvider.GetTenantId();
             if (tenantId == Guid.Empty) return Forbid();
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.ManageRoom))
+                return Forbid();
+
             await _catalog.DeleteRoomAsync(tenantId, roomId);
             return RedirectToPage(new { roomId = (Guid?)null });
         }
@@ -154,10 +291,14 @@ namespace twoSaaSCore.Pages.Files
             if (tenantId == Guid.Empty) return Forbid();
 
             parentPath = NormalizeFolderPath(parentPath);
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.ManageFolders, parentPath))
+                return Forbid();
+
             var safeFolderSegment = folderName.Trim();
             // Compose new folder path under parent
             var fullPath = parentPath + safeFolderSegment + "/";
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var userId = GetUserId();
             await _catalog.CreateVirtualFolderAsync(tenantId, roomId, fullPath, folderName.Trim(), userId);
             return RedirectToPage(new { roomId, folderPath = parentPath });
         }
@@ -170,6 +311,9 @@ namespace twoSaaSCore.Pages.Files
 
             folderPath = NormalizeFolderPath(folderPath);
             if (string.IsNullOrEmpty(folderPath)) return BadRequest();
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.ManageFolders, folderPath))
+                return Forbid();
 
             // Determine parent path to redirect back
             var parent = GetParentFolderPath(folderPath);
@@ -187,9 +331,24 @@ namespace twoSaaSCore.Pages.Files
             if (tenantId == Guid.Empty) return Forbid();
 
             folderPath = NormalizeFolderPath(folderPath);
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.Upload, folderPath))
+                return Forbid();
+
+            var userId = GetUserId();
+            var userObj = await _userManager.FindByIdAsync(userId);
+            var userEmail = userObj?.Email;
             await using var s = file.OpenReadStream();
             await _catalog.StoreFileAsync(tenantId, roomId, file.FileName, s, file.ContentType, userId, folderPath);
+
+            await _auditLogger.LogAsync(new AuditEntry(
+                tenantId, roomId, null, "Upload", userId, userEmail,
+                file.FileName, file.Length, null,
+                System.IO.Path.GetExtension(file.FileName)?.ToLowerInvariant(),
+                HttpContext.Connection.RemoteIpAddress?.ToString(),
+                Request.Headers.UserAgent.ToString().Truncate(256),
+                _auditLogger.NewCorrelationId(), null));
+
             return RedirectToPage(new { roomId, folderPath });
         }
 
@@ -203,6 +362,10 @@ namespace twoSaaSCore.Pages.Files
             var tenantId = _tenantProvider.GetTenantId();
             if (tenantId == Guid.Empty) return Forbid();
             folderPath = NormalizeFolderPath(folderPath);
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.Upload, folderPath))
+                return Forbid();
+
             var (blobName, sas) = await _catalog.GetWriteSasAsync(tenantId, roomId, fileName, TimeSpan.FromMinutes(15), folderPath);
             return new JsonResult(new { blobName, sas });
         }
@@ -222,6 +385,9 @@ namespace twoSaaSCore.Pages.Files
 
             folderPath = NormalizeFolderPath(folderPath);
 
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.Upload, folderPath))
+                return Forbid();
+
             // Validate prefix: tenantId/roomId/(folderPath)file
             var expectedPrefix = $"{tenantId}/{roomId}/";
             if (!blobName.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase))
@@ -237,7 +403,7 @@ namespace twoSaaSCore.Pages.Files
             var container = service.GetBlobContainerClient(_blobOptions.Container);
             var blob = container.GetBlobClient(blobName);
 
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+            var userId = GetUserId();
             var tags = new Dictionary<string, string>
             {
                 {"tenantId", tenantId.ToString() },
@@ -259,6 +425,31 @@ namespace twoSaaSCore.Pages.Files
                 return StatusCode(500, "Failed to set tags. Retry finalize.");
             }
 
+            await _auditLogger.LogAsync(new AuditEntry(
+                tenantId, roomId, fileId, "Upload", userId,
+                (await _userManager.FindByIdAsync(userId))?.Email,
+                fileName, size, null,
+                System.IO.Path.GetExtension(fileName)?.ToLowerInvariant(),
+                HttpContext.Connection.RemoteIpAddress?.ToString(),
+                Request.Headers.UserAgent.ToString().Truncate(256),
+                _auditLogger.NewCorrelationId(), null));
+
+            // Write SQL file reference
+            _db.RoomFileRefs.Add(new RoomFileRef
+            {
+                TenantId = tenantId,
+                RoomId = roomId,
+                FileId = fileId,
+                BlobName = blobName,
+                OriginalFileName = fileName,
+                Size = size,
+                ContentType = contentType,
+                FolderPath = string.IsNullOrEmpty(folderPath) ? null : folderPath,
+                AddedUtc = DateTimeOffset.UtcNow,
+                AddedByUserId = userId
+            });
+            await _db.SaveChangesAsync();
+
             return new JsonResult(new { fileId });
         }
 
@@ -271,9 +462,183 @@ namespace twoSaaSCore.Pages.Files
             if (tenantId == Guid.Empty) return Forbid();
 
             folderPath = NormalizeFolderPath(folderPath);
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.DeleteFiles, folderPath))
+                return Forbid();
+
+            // Fetch file metadata before deletion for audit
+            var metadata = await _catalog.GetFileAsync(tenantId, roomId, fileId, folderPath);
             await _catalog.DeleteFileAsync(tenantId, roomId, fileId, folderPath);
 
+            var deleteUserId = GetUserId();
+            await _auditLogger.LogAsync(new AuditEntry(
+                tenantId, roomId, fileId, "Delete", deleteUserId,
+                (await _userManager.FindByIdAsync(deleteUserId))?.Email,
+                metadata?.OriginalFileName, metadata?.Size, null,
+                metadata != null ? System.IO.Path.GetExtension(metadata.OriginalFileName)?.ToLowerInvariant() : null,
+                HttpContext.Connection.RemoteIpAddress?.ToString(),
+                Request.Headers.UserAgent.ToString().Truncate(256),
+                _auditLogger.NewCorrelationId(), null));
+
             return RedirectToPage(new { roomId, folderPath });
+        }
+
+        // ----- Invitation Handlers -----
+
+        public async Task<IActionResult> OnPostBulkDeleteAsync(Guid roomId, string? folderPath, [FromForm] List<Guid> fileIds)
+        {
+            if (roomId == Guid.Empty || fileIds == null || fileIds.Count == 0) return BadRequest();
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            folderPath = NormalizeFolderPath(folderPath);
+            var userId = GetUserId();
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, userId, RoomPermission.DeleteFiles, folderPath))
+                return Forbid();
+
+            var userEmail = (await _userManager.FindByIdAsync(userId))?.Email;
+
+            foreach (var fileId in fileIds)
+            {
+                var metadata = await _catalog.GetFileAsync(tenantId, roomId, fileId, folderPath);
+                await _catalog.DeleteFileAsync(tenantId, roomId, fileId, folderPath);
+
+                await _auditLogger.LogAsync(new AuditEntry(
+                    tenantId, roomId, fileId, "Delete", userId, userEmail,
+                    metadata?.OriginalFileName, metadata?.Size, null,
+                    metadata != null ? System.IO.Path.GetExtension(metadata.OriginalFileName)?.ToLowerInvariant() : null,
+                    HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    Request.Headers.UserAgent.ToString().Truncate(256),
+                    _auditLogger.NewCorrelationId(), null));
+            }
+
+            return RedirectToPage(new { roomId, folderPath });
+        }
+
+        public async Task<IActionResult> OnPostInviteUserAsync(Guid roomId, string email, RoomRole role, string? message)
+        {
+            if (roomId == Guid.Empty || string.IsNullOrWhiteSpace(email)) return BadRequest();
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.ManagePermissions))
+                return Forbid();
+
+            var invitation = await _invitations.CreateInvitationAsync(tenantId, roomId, email.Trim(), role, GetUserId(), message?.Trim());
+
+            // Build the invite link
+            var link = Url.Page("/Files/AcceptInvite", null, new { token = invitation.Token }, Request.Scheme);
+            InviteLinkGenerated = link;
+
+            // Reload page data so the UI can display the link
+            // Re-run OnGetAsync logic by redirecting with a flash
+            TempData["InviteLink"] = link;
+            TempData["InviteEmail"] = email.Trim();
+            return RedirectToPage(new { roomId });
+        }
+
+        public async Task<IActionResult> OnPostRevokeInviteAsync(Guid roomId, int invitationId)
+        {
+            if (roomId == Guid.Empty) return BadRequest();
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.ManagePermissions))
+                return Forbid();
+
+            await _invitations.RevokeInvitationAsync(tenantId, roomId, invitationId);
+            return RedirectToPage(new { roomId });
+        }
+
+        // ----- Member Management Handlers -----
+
+        public async Task<IActionResult> OnPostChangeMemberRoleAsync(Guid roomId, string memberId, RoomRole role)
+        {
+            if (roomId == Guid.Empty || string.IsNullOrWhiteSpace(memberId)) return BadRequest();
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            var currentUserId = GetUserId();
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, currentUserId, RoomPermission.ManagePermissions))
+                return Forbid();
+
+            // Prevent changing own role
+            if (memberId == currentUserId) return BadRequest("Cannot change your own role.");
+
+            await _permissions.UpdateAccessAsync(tenantId, roomId, memberId, role);
+            return RedirectToPage(new { roomId });
+        }
+
+        public async Task<IActionResult> OnPostRemoveMemberAsync(Guid roomId, string memberId)
+        {
+            if (roomId == Guid.Empty || string.IsNullOrWhiteSpace(memberId)) return BadRequest();
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            var currentUserId = GetUserId();
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, currentUserId, RoomPermission.ManagePermissions))
+                return Forbid();
+
+            // Prevent removing yourself
+            if (memberId == currentUserId) return BadRequest("Cannot remove yourself.");
+
+            await _permissions.RevokeAccessAsync(tenantId, roomId, memberId);
+            return RedirectToPage(new { roomId });
+        }
+
+        // ----- NDA Acceptance -----
+
+        public async Task<IActionResult> OnPostCloneRoomAsync(Guid roomId)
+        {
+            if (roomId == Guid.Empty) return BadRequest();
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            var userId = GetUserId();
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, userId, RoomPermission.ManageRoom))
+                return Forbid();
+
+            var sourceRoom = await _catalog.GetRoomAsync(tenantId, roomId);
+            if (sourceRoom == null) return NotFound();
+
+            var newRoom = await _catalog.CloneRoomAsync(
+                tenantId, roomId,
+                $"{sourceRoom.Name} (Copy)",
+                sourceRoom.NdaText,
+                userId);
+
+            await _permissions.GrantAccessAsync(tenantId, newRoom.RoomId, userId, RoomRole.Owner, userId);
+
+            return RedirectToPage(new { roomId = newRoom.RoomId });
+        }
+
+        public async Task<IActionResult> OnPostAcceptNdaAsync(Guid roomId)
+        {
+            if (roomId == Guid.Empty) return BadRequest();
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            var userId = GetUserId();
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, userId, RoomPermission.AccessRoom))
+                return Forbid();
+
+            var existing = await _db.NdaAcceptances
+                .AnyAsync(n => n.TenantId == tenantId && n.RoomId == roomId && n.UserId == userId);
+            if (!existing)
+            {
+                _db.NdaAcceptances.Add(new NdaAcceptance
+                {
+                    TenantId = tenantId,
+                    RoomId = roomId,
+                    UserId = userId,
+                    AcceptedUtc = DateTimeOffset.UtcNow,
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString()
+                });
+                await _db.SaveChangesAsync();
+            }
+
+            return RedirectToPage(new { roomId });
         }
 
         // ----- Helpers -----
@@ -324,7 +689,7 @@ namespace twoSaaSCore.Pages.Files
         {
             if (string.IsNullOrEmpty(original)) return "";
             var trimmed = original.Trim();
-            var encoded = Uri.EscapeDataString(trimmed);
+            var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(trimmed));
             if (encoded.Length <= MaxTagValueLength) return encoded;
 
             var ext = System.IO.Path.GetExtension(trimmed);
@@ -332,15 +697,28 @@ namespace twoSaaSCore.Pages.Files
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trimmed))).ToLowerInvariant();
             var shortBase = baseName.Length > 40 ? baseName[..40] : baseName;
             var composite = $"{shortBase}~{hash[..16]}{ext}";
-            var finalEncoded = Uri.EscapeDataString(composite);
+            var finalEncoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(composite));
             return finalEncoded.Length <= MaxTagValueLength ? finalEncoded : finalEncoded[..MaxTagValueLength];
+        }
+
+        private static string SanitizeForTag(string value)
+        {
+            var sb = new StringBuilder(value.Length);
+            foreach (var c in value)
+            {
+                if (char.IsLetterOrDigit(c) || c is ' ' or '+' or '-' or '.' or ':' or '=' or '_' or '/')
+                    sb.Append(c);
+                else
+                    sb.Append('_');
+            }
+            return sb.ToString();
         }
 
         private static string TruncateForTag(string value)
         {
             if (string.IsNullOrEmpty(value)) return "";
-            value = value.Trim();
-            return value.Length <= MaxTagValueLength ? value : value[..MaxTagValueLength];
+            var sanitized = SanitizeForTag(value.Trim());
+            return sanitized.Length <= MaxTagValueLength ? sanitized : sanitized[..MaxTagValueLength];
         }
     }
 }

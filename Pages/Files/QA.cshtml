@@ -1,0 +1,158 @@
+@page
+@model twoSaaSCore.Pages.Files.QAModel
+@using twoSaaSCore.Models
+@{
+    ViewData["Title"] = "Q&A";
+    var canManage = Model.CurrentPermissions.HasFlag(RoomPermission.ManagePermissions);
+
+    string TimeAgo(DateTimeOffset dt)
+    {
+        var diff = DateTimeOffset.UtcNow - dt;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalHours < 1) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalDays < 1) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 30) return $"{(int)diff.TotalDays}d ago";
+        return dt.ToString("MMM d, yyyy");
+    }
+
+    string StatusBadge(QuestionStatus s) => s switch
+    {
+        QuestionStatus.Open => "bg-warning text-dark",
+        QuestionStatus.Answered => "bg-success",
+        QuestionStatus.Closed => "bg-secondary",
+        _ => "bg-secondary"
+    };
+}
+
+<div class="vr-page-header">
+    <div>
+        <a asp-page="./Index" asp-route-roomId="@Model.RoomId" class="vr-back-link">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Back to Room
+        </a>
+        <h1 class="vr-page-title">
+            <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -4px; margin-right: 6px;"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            Q&amp;A
+        </h1>
+    </div>
+</div>
+
+@if (Model.SelectedQuestion == null)
+{
+    @* --- Ask a question --- *@
+    <div style="background: var(--vr-bg-card, #fff); border: 1px solid var(--vr-border, #e5e7eb); border-radius: 10px; padding: 1.25rem; margin-bottom: 1.5rem;">
+        <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem;">Ask a Question</h3>
+        <form method="post" asp-page-handler="Ask">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="roomId" value="@Model.RoomId" />
+            <div class="mb-2">
+                <input name="subject" class="form-control form-control-sm" placeholder="Subject" maxlength="200" required />
+            </div>
+            <div class="mb-2">
+                <textarea name="body" class="form-control form-control-sm" rows="3" placeholder="Describe your question…" maxlength="4000" required></textarea>
+            </div>
+            <button class="btn btn-sm btn-primary">Submit Question</button>
+        </form>
+    </div>
+
+    @* --- Questions list --- *@
+    @if (Model.Questions.Count == 0)
+    {
+        <div class="vr-empty-state">
+            <h3>No questions yet</h3>
+            <p>Ask the first question about documents in this room.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-sm align-middle vr-file-table">
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th>Status</th>
+                        <th>Asked By</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var q in Model.Questions)
+                {
+                    <tr>
+                        <td>
+                            <a asp-page="./QA" asp-route-roomId="@Model.RoomId" asp-route-questionId="@q.Id" style="font-weight: 500;">
+                                @q.Subject
+                            </a>
+                        </td>
+                        <td><span class="badge @StatusBadge(q.Status)">@q.Status</span></td>
+                        <td style="font-size: 0.85rem;">@(q.AskedByEmail ?? q.AskedByUserId)</td>
+                        <td style="font-size: 0.82rem; color: var(--vr-text-light);">@TimeAgo(q.AskedUtc)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+else
+{
+    var q = Model.SelectedQuestion;
+    @* --- Question detail --- *@
+    <div style="margin-bottom: 1.5rem;">
+        <a asp-page="./QA" asp-route-roomId="@Model.RoomId" class="vr-back-link" style="margin-bottom: 0.75rem; display: inline-block;">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            All Questions
+        </a>
+    </div>
+
+    <div style="background: var(--vr-bg-card, #fff); border: 1px solid var(--vr-border, #e5e7eb); border-radius: 10px; padding: 1.25rem; margin-bottom: 1rem;">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h2 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem;">@q.Subject</h2>
+                <span style="font-size: 0.82rem; color: var(--vr-text-light);">
+                    Asked by <strong>@(q.AskedByEmail ?? q.AskedByUserId)</strong> · @TimeAgo(q.AskedUtc)
+                </span>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <span class="badge @StatusBadge(q.Status)">@q.Status</span>
+                @if (canManage && q.Status != QuestionStatus.Closed)
+                {
+                    <form method="post" asp-page-handler="Close">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="roomId" value="@Model.RoomId" />
+                        <input type="hidden" name="questionId" value="@q.Id" />
+                        <button class="btn btn-sm btn-outline-secondary">Close</button>
+                    </form>
+                }
+            </div>
+        </div>
+        <div style="margin-top: 0.75rem; white-space: pre-wrap; font-size: 0.9rem;">@q.Body</div>
+    </div>
+
+    @* --- Answers --- *@
+    @foreach (var a in Model.Answers)
+    {
+        <div style="background: var(--vr-bg-card, #fff); border: 1px solid var(--vr-border, #e5e7eb); border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem; margin-left: 1.5rem;">
+            <div style="font-size: 0.82rem; color: var(--vr-text-light); margin-bottom: 0.5rem;">
+                <strong>@(a.AnsweredByEmail ?? a.AnsweredByUserId)</strong> · @TimeAgo(a.AnsweredUtc)
+            </div>
+            <div style="white-space: pre-wrap; font-size: 0.9rem;">@a.Body</div>
+        </div>
+    }
+
+    @* --- Post answer --- *@
+    @if (q.Status != QuestionStatus.Closed)
+    {
+        <div style="margin-left: 1.5rem; margin-top: 1rem;">
+            <form method="post" asp-page-handler="Answer">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="roomId" value="@Model.RoomId" />
+                <input type="hidden" name="questionId" value="@q.Id" />
+                <div class="mb-2">
+                    <textarea name="body" class="form-control form-control-sm" rows="3" placeholder="Write your answer…" maxlength="4000" required></textarea>
+                </div>
+                <button class="btn btn-sm btn-primary">Post Answer</button>
+            </form>
+        </div>
+    }
+}
