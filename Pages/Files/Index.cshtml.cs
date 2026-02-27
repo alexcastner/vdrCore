@@ -30,6 +30,7 @@ namespace twoSaaSCore.Pages.Files
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly ApplicationDbContext _db;
         private readonly IAuditLogger _auditLogger;
+        private readonly IRoomAgentService _agentService;
 
         public IndexModel(ITenantProvider tenantProvider,
                           IRoomFileCatalog catalog,
@@ -38,7 +39,8 @@ namespace twoSaaSCore.Pages.Files
                           IRoomInvitationService invitations,
                           UserManager<ApplicationUser> userManager,
                           ApplicationDbContext db,
-                          IAuditLogger auditLogger)
+                          IAuditLogger auditLogger,
+                          IRoomAgentService agentService)
         {
             _tenantProvider = tenantProvider;
             _catalog = catalog;
@@ -48,6 +50,7 @@ namespace twoSaaSCore.Pages.Files
             _userManager = userManager;
             _db = db;
             _auditLogger = auditLogger;
+            _agentService = agentService;
         }
 
         // Query parameters
@@ -123,6 +126,7 @@ namespace twoSaaSCore.Pages.Files
             public DateTimeOffset UploadedUtc { get; set; }
             public string? UploadedBy { get; set; }
             public string BlobName { get; set; } = string.Empty;
+            public AiIndexingStatus AiStatus { get; set; } = AiIndexingStatus.None;
         }
 
         private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
@@ -208,6 +212,37 @@ namespace twoSaaSCore.Pages.Files
                     UploadedBy = fm.UploadedByUserId,
                     BlobName = fm.BlobName
                 });
+            }
+
+            // Resolve user IDs to display names (emails)
+            var allUserIds = Files.Select(f => f.UploadedBy)
+                .Concat(Folders.Select(f => f.CreatedBy))
+                .Where(id => !string.IsNullOrEmpty(id))
+                .Distinct()
+                .ToList();
+            if (allUserIds.Count > 0)
+            {
+                var userMap = await _db.Users
+                    .Where(u => allUserIds.Contains(u.Id))
+                    .ToDictionaryAsync(u => u.Id, u => u.Email ?? u.UserName ?? u.Id);
+                foreach (var file in Files)
+                    if (file.UploadedBy != null && userMap.TryGetValue(file.UploadedBy, out var email))
+                        file.UploadedBy = email;
+                foreach (var folder in Folders)
+                    if (folder.CreatedBy != null && userMap.TryGetValue(folder.CreatedBy, out var fEmail))
+                        folder.CreatedBy = fEmail;
+            }
+
+            // Fetch AI indexing statuses for all files in this view
+            if (_agentService.IsConfigured && Files.Count > 0)
+            {
+                var fileIds = Files.Select(f => f.FileId).ToList();
+                var statuses = await _agentService.GetIndexingStatusesAsync(tenantId, RoomId.Value, fileIds);
+                foreach (var file in Files)
+                {
+                    if (statuses.TryGetValue(file.FileId, out var status))
+                        file.AiStatus = status;
+                }
             }
 
             // Load members & pending invitations for permission managers
@@ -339,15 +374,19 @@ namespace twoSaaSCore.Pages.Files
             var userObj = await _userManager.FindByIdAsync(userId);
             var userEmail = userObj?.Email;
             await using var s = file.OpenReadStream();
-            await _catalog.StoreFileAsync(tenantId, roomId, file.FileName, s, file.ContentType, userId, folderPath);
+            var stored = await _catalog.StoreFileAsync(tenantId, roomId, file.FileName, s, file.ContentType, userId, folderPath);
 
             await _auditLogger.LogAsync(new AuditEntry(
-                tenantId, roomId, null, "Upload", userId, userEmail,
+                tenantId, roomId, stored.FileId, "Upload", userId, userEmail,
                 file.FileName, file.Length, null,
                 System.IO.Path.GetExtension(file.FileName)?.ToLowerInvariant(),
                 HttpContext.Connection.RemoteIpAddress?.ToString(),
                 Request.Headers.UserAgent.ToString().Truncate(256),
                 _auditLogger.NewCorrelationId(), null));
+
+            // Send file to the AI vector store for indexing
+            await _agentService.UploadFileToVectorStoreAsync(
+                tenantId, roomId, stored.FileId, stored.BlobName, file.FileName);
 
             return RedirectToPage(new { roomId, folderPath });
         }
@@ -449,6 +488,10 @@ namespace twoSaaSCore.Pages.Files
                 AddedByUserId = userId
             });
             await _db.SaveChangesAsync();
+
+            // Send file to the AI vector store for indexing
+            await _agentService.UploadFileToVectorStoreAsync(
+                tenantId, roomId, fileId, blobName, fileName);
 
             return new JsonResult(new { fileId });
         }
@@ -585,6 +628,34 @@ namespace twoSaaSCore.Pages.Files
 
             await _permissions.RevokeAccessAsync(tenantId, roomId, memberId);
             return RedirectToPage(new { roomId });
+        }
+
+        // ----- AI Status Polling (AJAX) -----
+
+        public async Task<IActionResult> OnGetAiStatusAsync(Guid roomId, string fileIds)
+        {
+            if (roomId == Guid.Empty || string.IsNullOrWhiteSpace(fileIds))
+                return new JsonResult(new { });
+
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.ViewDocuments))
+                return Forbid();
+
+            var ids = fileIds
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => Guid.TryParse(s.Trim(), out var g) ? g : Guid.Empty)
+                .Where(g => g != Guid.Empty)
+                .ToList();
+
+            var statuses = await _agentService.GetIndexingStatusesAsync(tenantId, roomId, ids);
+
+            var result = statuses.ToDictionary(
+                kvp => kvp.Key.ToString(),
+                kvp => kvp.Value.ToString());
+
+            return new JsonResult(result);
         }
 
         // ----- NDA Acceptance -----

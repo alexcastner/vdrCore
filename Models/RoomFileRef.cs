@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations;
 
 namespace twoSaaSCore.Models
 {
@@ -15,5 +16,9 @@ namespace twoSaaSCore.Models
         public string? FolderPath { get; set; }
         public DateTimeOffset AddedUtc { get; set; }
         public string? AddedByUserId { get; set; }
+
+        /// <summary>Azure AI Foundry file ID (set when file is uploaded to the room's vector store).</summary>
+        [MaxLength(128)]
+        public string? VectorStoreFileId { get; set; }
     }
 }

@@ -1,6 +1,7 @@
 @page
 @model twoSaaSCore.Pages.Files.IndexModel
 @using twoSaaSCore.Models
+@using twoSaaSCore.Services
 @{
     var inRoom = Model.RoomId.HasValue && Model.RoomId.Value != Guid.Empty;
     var folderPath = Model.FolderPath ?? "";
@@ -146,7 +147,7 @@ else
                 <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
                 All Rooms
             </a>
-            <h1 class="vr-page-title">Room</h1>
+            <h1 class="vr-page-title">@(Model.RoomName ?? "Room")</h1>
             <nav class="vr-path-breadcrumb" aria-label="Folder path">
                 <a href="@CrumbLink("")" class="vr-path-segment">
                     <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -174,6 +175,10 @@ else
             </nav>
         </div>
         <div class="vr-page-header-actions">
+            <a asp-page="./RoomChat" asp-route-roomId="@Model.RoomId" class="btn btn-sm btn-outline-primary" title="AI Document Assistant">
+                <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>
+                AI Chat
+            </a>
             <a asp-page="./QA" asp-route-roomId="@Model.RoomId" class="btn btn-sm btn-outline-secondary" title="Questions & Answers">
                 <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 Q&amp;A
@@ -354,6 +359,7 @@ else
                     <th class="vr-col-size">Size</th>
                     <th class="vr-col-date">Modified</th>
                     <th class="vr-col-user">By</th>
+                    <th class="vr-col-ai-status">AI</th>
                     <th class="vr-col-actions"></th>
                 </tr>
                 </thead>
@@ -380,6 +386,7 @@ else
                         <td class="vr-col-size vr-text-secondary">—</td>
                         <td class="vr-col-date vr-text-secondary">@TimeAgo(f.CreatedUtc)</td>
                         <td class="vr-col-user vr-text-secondary">@f.CreatedBy</td>
+                        <td class="vr-col-ai-status"></td>
                         <td class="vr-col-actions">
                             @if (canManageFolders)
                             {
@@ -417,7 +424,25 @@ else
                     var isDocx = ext is ".docx" or ".doc";
                     var isXlsx = ext is ".xlsx" or ".xls";
                     var canView = canViewDocs && (isPdf || isDocx || isXlsx);
-                    <tr class="vr-row-file">
+
+                    var aiBadgeClass = f.AiStatus switch
+                    {
+                        AiIndexingStatus.Completed  => "vr-ai-badge-ready",
+                        AiIndexingStatus.InProgress  => "vr-ai-badge-indexing",
+                        AiIndexingStatus.Failed      => "vr-ai-badge-failed",
+                        AiIndexingStatus.Cancelled   => "vr-ai-badge-failed",
+                        _                            => "vr-ai-badge-none"
+                    };
+                    var aiBadgeText = f.AiStatus switch
+                    {
+                        AiIndexingStatus.Completed  => "Ready",
+                        AiIndexingStatus.InProgress  => "Indexing…",
+                        AiIndexingStatus.Failed      => "Failed",
+                        AiIndexingStatus.Cancelled   => "Cancelled",
+                        _                            => "—"
+                    };
+
+                    <tr class="vr-row-file" data-file-id="@f.FileId" data-ai-status="@f.AiStatus">
                         @if (canDownload || canDeleteFiles)
                         {
                             <td style="text-align: center;"><input type="checkbox" name="fileIds" value="@f.FileId" class="bulk-file-cb" /></td>
@@ -431,6 +456,11 @@ else
                         <td class="vr-col-size font-mono">@HumanSize(f.Size)</td>
                         <td class="vr-col-date vr-text-secondary" title="@f.UploadedUtc.ToString("u")">@TimeAgo(f.UploadedUtc)</td>
                         <td class="vr-col-user vr-text-secondary">@f.UploadedBy</td>
+                        <td class="vr-col-ai-status">
+                            <span class="vr-ai-badge @aiBadgeClass" data-ai-badge="@f.FileId">
+                                @aiBadgeText
+                            </span>
+                        </td>
                         <td class="vr-col-actions">
                             <div class="vr-row-actions">
                                 @if (canView)
@@ -768,6 +798,59 @@ else
                     form.action = this.getAttribute('data-action');
                     form.submit();
                 });
+            }
+        })();
+
+        // AI indexing status polling
+        (function () {
+            var roomId = '@Model.RoomId';
+            if (!roomId || roomId === '00000000-0000-0000-0000-000000000000') return;
+
+            function getInProgressIds() {
+                return Array.from(document.querySelectorAll('tr[data-ai-status="InProgress"]'))
+                    .map(function(tr) { return tr.dataset.fileId; })
+                    .filter(Boolean);
+            }
+
+            var STATUS_MAP = {
+                'Completed':  { cls: 'vr-ai-badge-ready',    text: 'Ready' },
+                'InProgress': { cls: 'vr-ai-badge-indexing',  text: 'Indexing\u2026' },
+                'Failed':     { cls: 'vr-ai-badge-failed',    text: 'Failed' },
+                'Cancelled':  { cls: 'vr-ai-badge-failed',    text: 'Cancelled' },
+                'None':       { cls: 'vr-ai-badge-none',      text: '\u2014' }
+            };
+
+            function poll() {
+                var ids = getInProgressIds();
+                if (ids.length === 0) return;
+
+                var url = '?handler=AiStatus&roomId=' + roomId + '&fileIds=' + ids.join(',');
+                fetch(url)
+                    .then(function(res) { return res.ok ? res.json() : null; })
+                    .then(function(data) {
+                        if (!data) return;
+                        for (var fileId in data) {
+                            var status = data[fileId];
+                            var badge = document.querySelector('[data-ai-badge="' + fileId + '"]');
+                            var row = document.querySelector('tr[data-file-id="' + fileId + '"]');
+                            if (!badge || !row) continue;
+
+                            var info = STATUS_MAP[status] || STATUS_MAP['None'];
+                            badge.className = 'vr-ai-badge ' + info.cls;
+                            badge.textContent = info.text;
+                            row.dataset.aiStatus = status;
+                        }
+                    })
+                    .catch(function() {})
+                    .finally(function() {
+                        if (getInProgressIds().length > 0) {
+                            setTimeout(poll, 5000);
+                        }
+                    });
+            }
+
+            if (getInProgressIds().length > 0) {
+                setTimeout(poll, 3000);
             }
         })();
     </script>

@@ -1,0 +1,125 @@
+using System;
+using System.Security.Claims;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Logging;
+using twoSaaSCore.Models;
+using twoSaaSCore.Services;
+
+namespace twoSaaSCore.Pages.Files
+{
+    [Authorize]
+    public class RoomChatModel : PageModel
+    {
+        private readonly ITenantProvider _tenantProvider;
+        private readonly IRoomPermissionService _permissions;
+        private readonly IRoomAgentService _agentService;
+        private readonly IRoomFileCatalog _catalog;
+        private readonly IAuditLogger _auditLogger;
+        private readonly UserManager<ApplicationUser> _userManager;
+        private readonly ILogger<RoomChatModel> _logger;
+
+        public RoomChatModel(
+            ITenantProvider tenantProvider,
+            IRoomPermissionService permissions,
+            IRoomAgentService agentService,
+            IRoomFileCatalog catalog,
+            IAuditLogger auditLogger,
+            UserManager<ApplicationUser> userManager,
+            ILogger<RoomChatModel> logger)
+        {
+            _tenantProvider = tenantProvider;
+            _permissions = permissions;
+            _agentService = agentService;
+            _catalog = catalog;
+            _auditLogger = auditLogger;
+            _userManager = userManager;
+            _logger = logger;
+        }
+
+        [BindProperty(SupportsGet = true)]
+        public Guid RoomId { get; set; }
+
+        public string? RoomName { get; private set; }
+        public bool AiConfigured => _agentService.IsConfigured;
+
+        private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+
+        public async Task<IActionResult> OnGetAsync()
+        {
+            if (RoomId == Guid.Empty) return BadRequest();
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty) return Forbid();
+
+            var userId = GetUserId();
+            var perms = await _permissions.GetEffectivePermissionsAsync(tenantId, RoomId, userId);
+            if (!perms.HasFlag(RoomPermission.ViewDocuments))
+                return Forbid();
+
+            var room = await _catalog.GetRoomAsync(tenantId, RoomId);
+            RoomName = room?.Name ?? "Room";
+
+            return Page();
+        }
+
+        public async Task<IActionResult> OnPostChatAsync(
+            [FromForm] Guid roomId,
+            [FromForm] string message,
+            [FromForm] string? threadId)
+        {
+            if (roomId == Guid.Empty || string.IsNullOrWhiteSpace(message))
+                return new JsonResult(new { error = "Invalid request." }) { StatusCode = 400 };
+
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty)
+                return new JsonResult(new { error = "Forbidden." }) { StatusCode = 403 };
+
+            var userId = GetUserId();
+            var perms = await _permissions.GetEffectivePermissionsAsync(tenantId, roomId, userId);
+            if (!perms.HasFlag(RoomPermission.ViewDocuments))
+                return new JsonResult(new { error = "Forbidden." }) { StatusCode = 403 };
+
+            if (!_agentService.IsConfigured)
+                return new JsonResult(new { error = "AI assistant is not configured." }) { StatusCode = 503 };
+
+            var userObj = await _userManager.FindByIdAsync(userId);
+            var userEmail = userObj?.Email;
+
+            try
+            {
+                var response = await _agentService.ChatAsync(tenantId, roomId, message.Trim(), threadId);
+
+                // Audit log the interaction
+                await _auditLogger.LogAsync(new AuditEntry(
+                    tenantId, roomId, null, "AiChat", userId, userEmail,
+                    null, null, null, null,
+                    HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    Request.Headers.UserAgent.ToString().Truncate(256),
+                    _auditLogger.NewCorrelationId(),
+                    JsonSerializer.Serialize(new
+                    {
+                        query = message.Trim().Length > 500 ? message.Trim()[..500] : message.Trim(),
+                        responseLength = response.Message.Length,
+                        threadId = response.ThreadId,
+                        citationCount = response.Citations.Count
+                    })));
+
+                return new JsonResult(new
+                {
+                    message = response.Message,
+                    threadId = response.ThreadId,
+                    citations = response.Citations
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AI Chat failed for room {RoomId}", roomId);
+                return new JsonResult(new { error = ex.Message }) { StatusCode = 500 };
+            }
+        }
+    }
+}

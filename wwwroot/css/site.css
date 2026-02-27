@@ -813,7 +813,29 @@ details[open] > .vr-large-upload-toggle svg {
 .vr-col-date  { width: 120px; }
 .vr-col-user  { width: 100px; }
 .vr-col-actions { width: 90px; }
+.vr-col-ai-status { width: 90px; }
 .vr-text-secondary { color: var(--vr-text-muted); font-size: .8rem; }
+
+/* AI indexing status badges */
+.vr-ai-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    font-size: .72rem;
+    font-weight: 600;
+    padding: .15rem .55rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.vr-ai-badge-ready   { background: #dcfce7; color: #166534; }
+.vr-ai-badge-indexing { background: #fef3c7; color: #92400e; animation: vr-pulse 1.5s ease-in-out infinite; }
+.vr-ai-badge-failed   { background: #fee2e2; color: #991b1b; }
+.vr-ai-badge-none     { background: #f3f4f6; color: #9ca3af; }
+
+@keyframes vr-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+}
 
 /* File name cell */
 .vr-file-name {

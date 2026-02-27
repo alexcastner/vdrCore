@@ -1,0 +1,193 @@
+@page
+@model twoSaaSCore.Pages.Files.RoomChatModel
+@{
+    ViewData["Title"] = "AI Chat";
+}
+
+<div class="vr-page-header">
+    <div>
+        <a asp-page="./Index" asp-route-roomId="@Model.RoomId" class="vr-back-link">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Back to Room
+        </a>
+        <h1 class="vr-page-title">
+            <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -4px; margin-right: 6px;">
+                <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
+                <line x1="10" y1="22" x2="14" y2="22"/>
+            </svg>
+            AI Assistant — @Model.RoomName
+        </h1>
+    </div>
+</div>
+
+@if (!Model.AiConfigured)
+{
+    <div class="alert alert-warning">
+        <strong>AI Assistant is not configured.</strong>
+        Contact your administrator to set up Azure AI Foundry integration.
+    </div>
+}
+else
+{
+    <div id="chatContainer" style="display: flex; flex-direction: column; height: calc(100vh - 220px); background: var(--vr-bg-card, #fff); border: 1px solid var(--vr-border, #e5e7eb); border-radius: 10px; overflow: hidden;">
+        <!-- Messages area -->
+        <div id="chatMessages" style="flex: 1; overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem;">
+            <div class="chat-system-msg" style="text-align: center; color: var(--vr-text-muted, #6b7280); font-size: 0.85rem; padding: 2rem 0;">
+                <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display: block; margin: 0 auto 0.5rem;">
+                    <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
+                    <line x1="10" y1="22" x2="14" y2="22"/>
+                </svg>
+                Ask questions about the documents in this room.<br/>
+                <small>Responses are grounded in uploaded files only.</small>
+            </div>
+        </div>
+
+        <!-- Input area -->
+        <div style="border-top: 1px solid var(--vr-border, #e5e7eb); padding: 0.75rem 1rem; background: var(--vr-bg-subtle, #f9fafb);">
+            <form id="chatForm" onsubmit="return sendChat(event);" style="display: flex; gap: 0.5rem; align-items: flex-end;">
+                @Html.AntiForgeryToken()
+                <input type="hidden" id="threadId" name="threadId" value="" />
+                <input type="hidden" name="roomId" value="@Model.RoomId" />
+                <textarea id="chatInput" name="message"
+                          placeholder="Ask a question about the documents…"
+                          rows="1"
+                          maxlength="4000"
+                          required
+                          style="flex: 1; resize: none; border: 1px solid var(--vr-border, #e5e7eb); border-radius: 8px; padding: 0.6rem 0.75rem; font-size: 0.9rem; font-family: inherit; min-height: 42px; max-height: 120px; overflow-y: auto;"
+                          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat(event);}"></textarea>
+                <button id="sendBtn" type="submit" class="btn btn-primary" style="border-radius: 8px; padding: 0.55rem 1rem; white-space: nowrap;"
+                        title="Send message">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px;">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                    </svg>
+                    Send
+                </button>
+            </form>
+        </div>
+    </div>
+}
+
+@section Scripts {
+<script>
+    let currentThreadId = '';
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatMarkdown(text) {
+        // Basic markdown: bold, italic, code blocks
+        let html = escapeHtml(text);
+        html = html.replace(/```([\s\S]*?)```/g, '<pre style="background:#f3f4f6;padding:0.75rem;border-radius:6px;overflow-x:auto;font-size:0.85rem;margin:0.5rem 0;"><code>$1</code></pre>');
+        html = html.replace(/`([^`]+)`/g, '<code style="background:#f3f4f6;padding:0.15rem 0.3rem;border-radius:3px;font-size:0.85em;">$1</code>');
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        html = html.replace(/\n/g, '<br/>');
+        return html;
+    }
+
+    function appendMessage(role, html) {
+        const container = document.getElementById('chatMessages');
+        const div = document.createElement('div');
+        div.style.cssText = role === 'user'
+            ? 'align-self:flex-end;background:var(--bs-primary,#0d6efd);color:#fff;border-radius:12px 12px 4px 12px;padding:0.65rem 0.9rem;max-width:75%;font-size:0.9rem;line-height:1.5;'
+            : 'align-self:flex-start;background:var(--vr-bg-subtle,#f3f4f6);color:var(--vr-text,#111827);border-radius:12px 12px 12px 4px;padding:0.65rem 0.9rem;max-width:85%;font-size:0.9rem;line-height:1.5;';
+        div.innerHTML = html;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function appendCitations(citations) {
+        if (!citations || citations.length === 0) return;
+        const container = document.getElementById('chatMessages');
+        const div = document.createElement('div');
+        div.style.cssText = 'align-self:flex-start;font-size:0.8rem;color:var(--vr-text-muted,#6b7280);padding:0 0.5rem;';
+        const unique = [...new Map(citations.map(c => [c.fileName, c])).values()];
+        div.innerHTML = '<strong>Sources:</strong> ' + unique.map(c =>
+            '<span style="background:#e5e7eb;padding:0.15rem 0.4rem;border-radius:4px;margin-right:0.25rem;display:inline-block;margin-top:0.2rem;">' +
+            escapeHtml(c.fileName) + '</span>'
+        ).join('');
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function showTyping() {
+        const container = document.getElementById('chatMessages');
+        const div = document.createElement('div');
+        div.id = 'typingIndicator';
+        div.style.cssText = 'align-self:flex-start;color:var(--vr-text-muted,#6b7280);font-size:0.85rem;padding:0.5rem;';
+        div.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Thinking…';
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function removeTyping() {
+        const el = document.getElementById('typingIndicator');
+        if (el) el.remove();
+    }
+
+    async function sendChat(e) {
+        if (e) e.preventDefault();
+        const input = document.getElementById('chatInput');
+        const message = input.value.trim();
+        if (!message) return false;
+
+        const btn = document.getElementById('sendBtn');
+        btn.disabled = true;
+        input.value = '';
+        input.style.height = 'auto';
+
+        // Show user message
+        appendMessage('user', escapeHtml(message));
+        showTyping();
+
+        try {
+            const form = document.getElementById('chatForm');
+            const token = form.querySelector('[name="__RequestVerificationToken"]').value;
+
+            const body = new URLSearchParams();
+            body.append('roomId', '@Model.RoomId');
+            body.append('message', message);
+            body.append('threadId', currentThreadId);
+            body.append('__RequestVerificationToken', token);
+
+            const resp = await fetch('?handler=Chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString()
+            });
+
+            removeTyping();
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: 'Request failed.' }));
+                appendMessage('assistant', '<em style="color:#dc3545;">' + escapeHtml(err.error || 'An error occurred.') + '</em>');
+                return false;
+            }
+
+            const data = await resp.json();
+            currentThreadId = data.threadId || '';
+            document.getElementById('threadId').value = currentThreadId;
+
+            appendMessage('assistant', formatMarkdown(data.message));
+            appendCitations(data.citations);
+        } catch (ex) {
+            removeTyping();
+            appendMessage('assistant', '<em style="color:#dc3545;">Network error. Please try again.</em>');
+        } finally {
+            btn.disabled = false;
+            input.focus();
+        }
+
+        return false;
+    }
+
+    // Auto-resize textarea
+    document.getElementById('chatInput')?.addEventListener('input', function () {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+</script>
+}
