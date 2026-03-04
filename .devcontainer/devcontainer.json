@@ -1,0 +1,35 @@
+{
+  "name": "vdrCore (.NET 9)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [5000, 5001, 1433],
+  "portsAttributes": {
+    "5000": {
+      "label": "ASP.NET Core (HTTP)",
+      "onAutoForward": "notify"
+    },
+    "5001": {
+      "label": "ASP.NET Core (HTTPS)",
+      "onAutoForward": "silent"
+    },
+    "1433": {
+      "label": "SQL Server"
+    }
+  },
+  "remoteEnv": {
+    "ASPNETCORE_ENVIRONMENT": "Development",
+    "ConnectionStrings__DefaultConnection": "Server=sql,1433;Initial Catalog=vdr;User Id=sa;Password=Your_password123!;TrustServerCertificate=True;Encrypt=True;MultipleActiveResultSets=True"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.csdevkit",
+        "ms-dotnettools.vscode-dotnet-runtime",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  }
+}

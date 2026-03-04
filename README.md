@@ -1,5 +1,27 @@
 Multitenancy (Subdomain) for Razor Pages (.NET 9)
 
+## GitHub Codespaces setup
+
+This repository is configured for Codespaces using `.devcontainer`.
+
+### What is included
+- .NET 9 SDK dev container
+- SQL Server 2022 sidecar container
+- Environment override for `ConnectionStrings__DefaultConnection`
+- Automatic `dotnet restore`
+- Automatic `dotnet ef database update`
+
+### Start in Codespaces
+1. Open the repository in GitHub Codespaces.
+2. Wait for the post-create script to finish.
+3. Run the app:
+   - `dotnet run --project ./twoSaaSCore.csproj --urls http://0.0.0.0:5000`
+4. Open the forwarded port `5000`.
+
+### Notes
+- The SQL container uses development credentials from `.devcontainer/docker-compose.yml`.
+- App settings from `appsettings.json` are overridden in Codespaces via environment variables.
+
 This project implements multitenancy in a single sharded database using subdomains to associate requests and users with a tenant.
 
 Key features
