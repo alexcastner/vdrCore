@@ -47,6 +47,12 @@ namespace twoSaaSCore.Pages.Files
         public string? RoomName { get; private set; }
         public bool AiConfigured => _agentService.IsConfigured;
 
+        /// <summary>Current custom system instructions for this room (null = defaults only).</summary>
+        public string? SystemInstructions { get; private set; }
+
+        /// <summary>Whether the current user can edit system instructions (Owner/Admin only).</summary>
+        public bool CanEditInstructions { get; private set; }
+
         private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
 
         public async Task<IActionResult> OnGetAsync()
@@ -60,10 +66,49 @@ namespace twoSaaSCore.Pages.Files
             if (!perms.HasFlag(RoomPermission.ViewDocuments))
                 return Forbid();
 
+            CanEditInstructions = perms.HasFlag(RoomPermission.ManageRoom);
+
             var room = await _catalog.GetRoomAsync(tenantId, RoomId);
             RoomName = room?.Name ?? "Room";
 
+            if (_agentService.IsConfigured)
+            {
+                SystemInstructions = await _agentService.GetSystemInstructionsAsync(tenantId, RoomId);
+            }
+
             return Page();
+        }
+
+        /// <summary>AJAX handler to save custom system instructions.</summary>
+        public async Task<IActionResult> OnPostSaveInstructionsAsync(
+            [FromForm] Guid roomId,
+            [FromForm] string? instructions)
+        {
+            if (roomId == Guid.Empty)
+                return new JsonResult(new { error = "Invalid request." }) { StatusCode = 400 };
+
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty)
+                return new JsonResult(new { error = "Forbidden." }) { StatusCode = 403 };
+
+            var userId = GetUserId();
+            var perms = await _permissions.GetEffectivePermissionsAsync(tenantId, roomId, userId);
+            if (!perms.HasFlag(RoomPermission.ManageRoom))
+                return new JsonResult(new { error = "You do not have permission to edit instructions." }) { StatusCode = 403 };
+
+            if (!_agentService.IsConfigured)
+                return new JsonResult(new { error = "AI assistant is not configured." }) { StatusCode = 503 };
+
+            try
+            {
+                await _agentService.UpdateSystemInstructionsAsync(tenantId, roomId, instructions);
+                return new JsonResult(new { ok = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save system instructions for room {RoomId}", roomId);
+                return new JsonResult(new { error = "Failed to save instructions." }) { StatusCode = 500 };
+            }
         }
 
         public async Task<IActionResult> OnPostChatAsync(

@@ -27,6 +27,7 @@ namespace twoSaaSCore.Data
         public DbSet<RoomAnswer> RoomAnswers { get; set; } = null!;
         public DbSet<RoomFileRef> RoomFileRefs { get; set; } = null!;
         public DbSet<RoomAgent> RoomAgents { get; set; } = null!;
+        public DbSet<RoomWebLink> RoomWebLinks { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -198,6 +199,27 @@ namespace twoSaaSCore.Data
             builder.Entity<RoomFileRef>()
                 .Property(r => r.VectorStoreFileId)
                 .HasMaxLength(128);
+
+            // RoomWebLink config
+            builder.Entity<RoomWebLink>(e =>
+            {
+                e.HasIndex(w => new { w.TenantId, w.RoomId, w.LinkId })
+                 .IsUnique();
+
+                e.HasIndex(w => new { w.TenantId, w.RoomId });
+
+                e.Property(w => w.Url)
+                 .HasMaxLength(2048);
+
+                e.Property(w => w.Title)
+                 .HasMaxLength(256);
+
+                e.Property(w => w.VectorStoreFileId)
+                 .HasMaxLength(128);
+
+                e.Property(w => w.AddedByUserId)
+                 .HasMaxLength(450);
+            });
 
             // Apply global tenant filter to all entities implementing ITenantEntity
             foreach (var entityType in builder.Model.GetEntityTypes().ToList())

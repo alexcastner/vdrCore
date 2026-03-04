@@ -12,6 +12,7 @@ namespace twoSaaSCore.Services
     public enum AiIndexingStatus
     {
         None,
+        Queued,
         InProgress,
         Completed,
         Failed,
@@ -32,5 +33,21 @@ namespace twoSaaSCore.Services
         /// </summary>
         Task<Dictionary<Guid, AiIndexingStatus>> GetIndexingStatusesAsync(
             Guid tenantId, Guid roomId, IReadOnlyList<Guid> fileIds, CancellationToken ct = default);
+
+        /// <summary>Gets the current custom system instructions for a room, or null if using defaults.</summary>
+        Task<string?> GetSystemInstructionsAsync(Guid tenantId, Guid roomId, CancellationToken ct = default);
+
+        /// <summary>Updates the custom system instructions and pushes them to the AI assistant.</summary>
+        Task UpdateSystemInstructionsAsync(Guid tenantId, Guid roomId, string? instructions, CancellationToken ct = default);
+
+        /// <summary>Indexes a web link into the room's vector store (HTML text + discovered PDFs).</summary>
+        Task IndexWebLinkAsync(Guid tenantId, Guid roomId, Guid linkId, string url, CancellationToken ct = default);
+
+        /// <summary>Removes a web link's indexed content from the vector store.</summary>
+        Task RemoveWebLinkFromVectorStoreAsync(Guid tenantId, Guid roomId, Guid linkId, CancellationToken ct = default);
+
+        /// <summary>Checks the vector store indexing status for a batch of web links.</summary>
+        Task<Dictionary<Guid, AiIndexingStatus>> GetWebLinkIndexingStatusesAsync(
+            Guid tenantId, Guid roomId, IReadOnlyList<Guid> linkIds, CancellationToken ct = default);
     }
 }

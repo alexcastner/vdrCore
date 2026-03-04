@@ -48,6 +48,24 @@
             _ => "vr-badge-file"
         };
     }
+
+    string WebLinkStatusClass(AiIndexingStatus status) => status switch
+    {
+        AiIndexingStatus.Completed => "vr-ai-badge vr-ai-badge-ready",
+        AiIndexingStatus.Queued => "vr-ai-badge vr-ai-badge-queued",
+        AiIndexingStatus.InProgress => "vr-ai-badge vr-ai-badge-indexing",
+        AiIndexingStatus.Failed => "vr-ai-badge vr-ai-badge-failed",
+        _ => "vr-ai-badge vr-ai-badge-none"
+    };
+
+    string WebLinkStatusLabel(AiIndexingStatus status) => status switch
+    {
+        AiIndexingStatus.Completed => "Ready",
+        AiIndexingStatus.Queued => "Queued",
+        AiIndexingStatus.InProgress => "Indexing",
+        AiIndexingStatus.Failed => "Failed",
+        _ => "—"
+    };
 }
 
 @if (!inRoom)
@@ -175,6 +193,17 @@ else
             </nav>
         </div>
         <div class="vr-page-header-actions">
+            @if (canManageRoom && Model.AiConfigured)
+            {
+                <button type="button" id="toggleWebLinksBtn" class="btn btn-sm btn-outline-secondary" title="Manage web links">
+                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    Web Links
+                    @if (Model.WebLinks.Count > 0)
+                    {
+                        <span class="badge bg-secondary ms-1">@Model.WebLinks.Count</span>
+                    }
+                </button>
+            }
             <a asp-page="./RoomChat" asp-route-roomId="@Model.RoomId" class="btn btn-sm btn-outline-primary" title="AI Document Assistant">
                 <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>
                 AI Chat
@@ -209,6 +238,50 @@ else
             }
         </div>
     </div>
+
+    @if (canManageRoom && Model.AiConfigured)
+    {
+        <div id="webLinksPanel" class="vr-instructions-panel" style="display:none; margin-bottom:1rem;">
+            <h3 style="font-size:.95rem; margin:0 0 .4rem;">Web Links for AI</h3>
+            <p class="text-muted" style="font-size:.8rem; margin:0 0 .6rem;">Add website URLs to index page content and linked PDFs into this room.</p>
+
+            <form id="webLinkAntiForgeryForm" style="display:none;">
+                @Html.AntiForgeryToken()
+            </form>
+
+            <div style="display:flex; gap:.5rem; align-items:center; margin-top:.5rem;">
+                <input type="url" id="webLinkUrl" class="form-control form-control-sm" maxlength="2048" placeholder="https://example.com/page" style="flex:1;" />
+                <button type="button" id="addWebLinkBtn" class="btn btn-sm btn-primary">Add</button>
+            </div>
+            <div id="webLinkError" style="display:none; color:var(--vr-danger); font-size:.8rem; margin-top:.35rem;"></div>
+
+            <div id="webLinkList" style="margin-top:.75rem;">
+                @foreach (var link in Model.WebLinks)
+                {
+                    var status = Model.WebLinkStatuses.GetValueOrDefault(link.LinkId, AiIndexingStatus.None);
+                    <div class="vr-weblink-item" data-link-id="@link.LinkId">
+                        <div class="vr-weblink-icon">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        </div>
+                        <div class="vr-weblink-details">
+                            <span class="vr-weblink-title" title="@link.Url">@(link.Title ?? link.Url)</span>
+                            <span class="vr-weblink-url">@link.Url</span>
+                        </div>
+                        <div class="vr-weblink-actions">
+                            <span class="@WebLinkStatusClass(status)" data-role="weblink-status">@WebLinkStatusLabel(status)</span>
+                            @if (link.LinkedPdfCount > 0)
+                            {
+                                <span class="vr-weblink-pdf-count">@link.LinkedPdfCount PDF@(link.LinkedPdfCount == 1 ? "" : "s")</span>
+                            }
+                            <button type="button" class="vr-icon-btn vr-icon-btn-danger" data-remove-weblink="@link.LinkId" title="Remove">
+                                <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
 
     <!-- Action toolbar -->
     @if (canManageFolders)
@@ -337,7 +410,7 @@ else
                 {
                 <button type="button" class="btn btn-sm btn-outline-danger" id="bulkDeleteBtn" disabled
                         data-action="@($"{Url.Page("./Index")}?handler=BulkDelete")">
-                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     Delete Selected
                 </button>
                 }
@@ -428,6 +501,7 @@ else
                     var aiBadgeClass = f.AiStatus switch
                     {
                         AiIndexingStatus.Completed  => "vr-ai-badge-ready",
+                        AiIndexingStatus.Queued      => "vr-ai-badge-queued",
                         AiIndexingStatus.InProgress  => "vr-ai-badge-indexing",
                         AiIndexingStatus.Failed      => "vr-ai-badge-failed",
                         AiIndexingStatus.Cancelled   => "vr-ai-badge-failed",
@@ -436,6 +510,7 @@ else
                     var aiBadgeText = f.AiStatus switch
                     {
                         AiIndexingStatus.Completed  => "Ready",
+                        AiIndexingStatus.Queued      => "Queued",
                         AiIndexingStatus.InProgress  => "Indexing…",
                         AiIndexingStatus.Failed      => "Failed",
                         AiIndexingStatus.Cancelled   => "Cancelled",
@@ -521,7 +596,7 @@ else
     {
         <div class="vr-section" style="margin-top: 2rem;">
             <h2 class="vr-section-title">
-                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px; margin-right: 6px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px; margin-right: 6px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2z"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                 Members &amp; Invitations
             </h2>
 
@@ -806,14 +881,15 @@ else
             var roomId = '@Model.RoomId';
             if (!roomId || roomId === '00000000-0000-0000-0000-000000000000') return;
 
-            function getInProgressIds() {
-                return Array.from(document.querySelectorAll('tr[data-ai-status="InProgress"]'))
+            function getActiveAiIds() {
+                return Array.from(document.querySelectorAll('tr[data-ai-status="InProgress"], tr[data-ai-status="Queued"]'))
                     .map(function(tr) { return tr.dataset.fileId; })
                     .filter(Boolean);
             }
 
             var STATUS_MAP = {
                 'Completed':  { cls: 'vr-ai-badge-ready',    text: 'Ready' },
+                'Queued':     { cls: 'vr-ai-badge-queued',    text: 'Queued' },
                 'InProgress': { cls: 'vr-ai-badge-indexing',  text: 'Indexing\u2026' },
                 'Failed':     { cls: 'vr-ai-badge-failed',    text: 'Failed' },
                 'Cancelled':  { cls: 'vr-ai-badge-failed',    text: 'Cancelled' },
@@ -821,7 +897,7 @@ else
             };
 
             function poll() {
-                var ids = getInProgressIds();
+                var ids = getActiveAiIds();
                 if (ids.length === 0) return;
 
                 var url = '?handler=AiStatus&roomId=' + roomId + '&fileIds=' + ids.join(',');
@@ -843,15 +919,158 @@ else
                     })
                     .catch(function() {})
                     .finally(function() {
-                        if (getInProgressIds().length > 0) {
+                        if (getActiveAiIds().length > 0) {
                             setTimeout(poll, 5000);
                         }
                     });
             }
 
-            if (getInProgressIds().length > 0) {
+            if (getActiveAiIds().length > 0) {
                 setTimeout(poll, 3000);
             }
+        })();
+
+        // Web-link management + status polling
+        (function () {
+            var roomId = '@Model.RoomId';
+            if (!roomId || roomId === '00000000-0000-0000-0000-000000000000') return;
+
+            var panel = document.getElementById('webLinksPanel');
+            var toggleBtn = document.getElementById('toggleWebLinksBtn');
+            if (toggleBtn && panel) {
+                toggleBtn.addEventListener('click', function () {
+                    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                });
+            }
+
+            function token() {
+                var t = document.querySelector('#webLinkAntiForgeryForm input[name="__RequestVerificationToken"]');
+                return t ? t.value : '';
+            }
+
+            function statusClass(status) {
+                switch ((status || '').toLowerCase()) {
+                    case 'completed': return 'vr-ai-badge vr-ai-badge-ready';
+                    case 'queued': return 'vr-ai-badge vr-ai-badge-queued';
+                    case 'inprogress': return 'vr-ai-badge vr-ai-badge-indexing';
+                    case 'failed': return 'vr-ai-badge vr-ai-badge-failed';
+                    default: return 'vr-ai-badge vr-ai-badge-none';
+                }
+            }
+
+            function statusText(status) {
+                switch ((status || '').toLowerCase()) {
+                    case 'completed': return 'Ready';
+                    case 'queued': return 'Queued';
+                    case 'inprogress': return 'Indexing';
+                    case 'failed': return 'Failed';
+                    default: return '—';
+                }
+            }
+
+            var addBtn = document.getElementById('addWebLinkBtn');
+            var urlInput = document.getElementById('webLinkUrl');
+            var errEl = document.getElementById('webLinkError');
+            var list = document.getElementById('webLinkList');
+
+            if (addBtn && urlInput && errEl && list) {
+                addBtn.addEventListener('click', function () {
+                    var url = (urlInput.value || '').trim();
+                    errEl.style.display = 'none';
+                    if (!url) return;
+
+                    addBtn.disabled = true;
+
+                    var body = new URLSearchParams();
+                    body.append('roomId', roomId);
+                    body.append('url', url);
+                    body.append('__RequestVerificationToken', token());
+
+                    fetch('?handler=AddWebLink', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: body.toString()
+                    })
+                    .then(async function (resp) {
+                        var data = await resp.json().catch(function(){ return {}; });
+                        if (!resp.ok) throw new Error(data.error || 'Failed to add link.');
+
+                        var row = document.createElement('div');
+                        row.className = 'vr-weblink-item';
+                        row.setAttribute('data-link-id', data.linkId);
+                        row.innerHTML =
+                            '<div class="vr-weblink-icon"></div>' +
+                            '<div class="vr-weblink-details">' +
+                                '<span class="vr-weblink-title" title="' + (data.url || '') + '">' + (data.title || data.url || '') + '</span>' +
+                                '<span class="vr-weblink-url">' + (data.url || '') + '</span>' +
+                            '</div>' +
+                            '<div class="vr-weblink-actions">' +
+                                '<span class="vr-ai-badge vr-ai-badge-queued" data-role="weblink-status">Queued</span>' +
+                                '<button type="button" class="vr-icon-btn vr-icon-btn-danger" data-remove-weblink="' + data.linkId + '" title="Remove">' +
+                                    '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
+                                '</button>' +
+                            '</div>';
+                        list.prepend(row);
+                        urlInput.value = '';
+                    })
+                    .catch(function (err) {
+                        errEl.textContent = err.message || 'Failed to add link.';
+                        errEl.style.display = 'block';
+                    })
+                    .finally(function () {
+                        addBtn.disabled = false;
+                    });
+                });
+
+                list.addEventListener('click', function (e) {
+                    var btn = e.target.closest('[data-remove-weblink]');
+                    if (!btn) return;
+                    if (!confirm('Remove this web link from AI indexing?')) return;
+
+                    var linkId = btn.getAttribute('data-remove-weblink');
+                    var body = new URLSearchParams();
+                    body.append('roomId', roomId);
+                    body.append('linkId', linkId);
+                    body.append('__RequestVerificationToken', token());
+
+                    fetch('?handler=RemoveWebLink', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: body.toString()
+                    }).then(function (resp) {
+                        if (!resp.ok) return;
+                        var row = btn.closest('.vr-weblink-item');
+                        if (row) row.remove();
+                    });
+                });
+            }
+
+            function pollWebLinkStatuses() {
+                var rows = Array.from(document.querySelectorAll('.vr-weblink-item[data-link-id]'));
+                if (rows.length === 0) return;
+
+                var ids = rows.map(function(r){ return r.getAttribute('data-link-id'); }).filter(Boolean).join(',');
+                if (!ids) return;
+
+                fetch('?handler=WebLinkStatus&roomId=' + roomId + '&linkIds=' + encodeURIComponent(ids))
+                    .then(function (res) { return res.ok ? res.json() : null; })
+                    .then(function (data) {
+                        if (!data) return;
+                        rows.forEach(function (row) {
+                            var id = row.getAttribute('data-link-id');
+                            var status = data[id];
+                            if (!status) return;
+                            var badge = row.querySelector('[data-role="weblink-status"]');
+                            if (!badge) return;
+                            badge.className = statusClass(status);
+                            badge.textContent = statusText(status);
+                        });
+                    })
+                    .catch(function () {});
+            }
+
+            setInterval(pollWebLinkStatuses, 5000);
+            pollWebLinkStatuses();
         })();
     </script>
 }

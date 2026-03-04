@@ -23,6 +23,9 @@ namespace twoSaaSCore.Models
         [MaxLength(128)]
         public string VectorStoreId { get; set; } = string.Empty;
 
+        /// <summary>Optional custom system instructions for the AI assistant in this room.</summary>
+        public string? SystemInstructions { get; set; }
+
         public DateTimeOffset CreatedUtc { get; set; }
     }
 }

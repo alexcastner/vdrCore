@@ -51,7 +51,11 @@ builder.Services.AddScoped<IRoomQaService, RoomQaService>();
 
 // Azure AI Foundry agent (per-room RAG chat)
 builder.Services.Configure<AzureAiOptions>(builder.Configuration.GetSection("AzureAi"));
+builder.Services.AddHttpClient();
 builder.Services.AddScoped<IRoomAgentService, RoomAgentService>();
+builder.Services.AddSingleton<AiIndexingQueue>();
+builder.Services.AddSingleton<IAiIndexingQueue>(sp => sp.GetRequiredService<AiIndexingQueue>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AiIndexingQueue>());
 
 // Register SMS sender (Twilio when enabled, otherwise no-op)
 var twilioSection = builder.Configuration.GetSection("Twilio");

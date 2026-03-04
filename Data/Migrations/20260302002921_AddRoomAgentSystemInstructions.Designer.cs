@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using twoSaaSCore.Data;
 
@@ -11,9 +12,11 @@ using twoSaaSCore.Data;
 namespace twoSaaSCore.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260302002921_AddRoomAgentSystemInstructions")]
+    partial class AddRoomAgentSystemInstructions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -559,59 +562,6 @@ namespace twoSaaSCore.Data.Migrations
                     b.HasIndex("TenantId", "RoomId");
 
                     b.ToTable("RoomQuestions");
-                });
-
-            modelBuilder.Entity("twoSaaSCore.Models.RoomWebLink", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("AddedByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTimeOffset>("AddedUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<DateTimeOffset?>("LastFetchedUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<Guid>("LinkId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("LinkedPdfCount")
-                        .HasColumnType("int");
-
-                    b.Property<Guid>("RoomId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("Title")
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("Url")
-                        .IsRequired()
-                        .HasMaxLength(2048)
-                        .HasColumnType("nvarchar(2048)");
-
-                    b.Property<string>("VectorStoreFileId")
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "RoomId");
-
-                    b.HasIndex("TenantId", "RoomId", "LinkId")
-                        .IsUnique();
-
-                    b.ToTable("RoomWebLinks");
                 });
 
             modelBuilder.Entity("twoSaaSCore.Models.Tenant", b =>

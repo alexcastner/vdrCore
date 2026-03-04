@@ -31,6 +31,7 @@ namespace twoSaaSCore.Pages.Files
         private readonly ApplicationDbContext _db;
         private readonly IAuditLogger _auditLogger;
         private readonly IRoomAgentService _agentService;
+        private readonly IAiIndexingQueue _aiIndexingQueue;
 
         public IndexModel(ITenantProvider tenantProvider,
                           IRoomFileCatalog catalog,
@@ -40,7 +41,8 @@ namespace twoSaaSCore.Pages.Files
                           UserManager<ApplicationUser> userManager,
                           ApplicationDbContext db,
                           IAuditLogger auditLogger,
-                          IRoomAgentService agentService)
+                          IRoomAgentService agentService,
+                          IAiIndexingQueue aiIndexingQueue)
         {
             _tenantProvider = tenantProvider;
             _catalog = catalog;
@@ -51,6 +53,7 @@ namespace twoSaaSCore.Pages.Files
             _db = db;
             _auditLogger = auditLogger;
             _agentService = agentService;
+            _aiIndexingQueue = aiIndexingQueue;
         }
 
         // Query parameters
@@ -69,6 +72,10 @@ namespace twoSaaSCore.Pages.Files
         // Files (in current folder or root of room)
         public List<FileRow> Files { get; private set; } = new();
 
+        // Web links managed for this room
+        public List<RoomWebLink> WebLinks { get; private set; } = new();
+        public Dictionary<Guid, AiIndexingStatus> WebLinkStatuses { get; private set; } = new();
+
         // Effective permissions for current user in this room/folder
         public RoomPermission CurrentPermissions { get; private set; } = RoomPermission.None;
 
@@ -84,6 +91,8 @@ namespace twoSaaSCore.Pages.Files
 
         // Room creation permission (Editor+ or no rooms yet)
         public bool CanCreateRooms { get; private set; }
+
+        public bool AiConfigured => _agentService.IsConfigured;
 
         public class MemberRow
         {
@@ -245,6 +254,23 @@ namespace twoSaaSCore.Pages.Files
                 }
             }
 
+            // Load web links and statuses for this room
+            if (_agentService.IsConfigured)
+            {
+                WebLinks = await _db.RoomWebLinks
+                    .Where(w => w.TenantId == tenantId && w.RoomId == RoomId.Value)
+                    .OrderByDescending(w => w.AddedUtc)
+                    .ToListAsync();
+
+                if (WebLinks.Count > 0)
+                {
+                    WebLinkStatuses = await _agentService.GetWebLinkIndexingStatusesAsync(
+                        tenantId,
+                        RoomId.Value,
+                        WebLinks.Select(w => w.LinkId).ToList());
+                }
+            }
+
             // Load members & pending invitations for permission managers
             if (CurrentPermissions.HasFlag(RoomPermission.ManagePermissions))
             {
@@ -384,9 +410,19 @@ namespace twoSaaSCore.Pages.Files
                 Request.Headers.UserAgent.ToString().Truncate(256),
                 _auditLogger.NewCorrelationId(), null));
 
-            // Send file to the AI vector store for indexing
-            await _agentService.UploadFileToVectorStoreAsync(
-                tenantId, roomId, stored.FileId, stored.BlobName, file.FileName);
+            if (_agentService.IsConfigured)
+            {
+                var fileRef = await _db.RoomFileRefs
+                    .FirstOrDefaultAsync(r => r.TenantId == tenantId && r.RoomId == roomId && r.FileId == stored.FileId);
+                if (fileRef != null)
+                {
+                    fileRef.VectorStoreFileId = $"{RoomAgentService.QueuedVectorStoreFileIdPrefix}{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+                    await _db.SaveChangesAsync();
+                }
+
+                // Queue AI indexing in background so upload returns immediately.
+                _aiIndexingQueue.Enqueue(tenantId, roomId, stored.FileId, stored.BlobName, file.FileName);
+            }
 
             return RedirectToPage(new { roomId, folderPath });
         }
@@ -485,13 +521,18 @@ namespace twoSaaSCore.Pages.Files
                 ContentType = contentType,
                 FolderPath = string.IsNullOrEmpty(folderPath) ? null : folderPath,
                 AddedUtc = DateTimeOffset.UtcNow,
-                AddedByUserId = userId
+                AddedByUserId = userId,
+                VectorStoreFileId = _agentService.IsConfigured
+                    ? $"{RoomAgentService.QueuedVectorStoreFileIdPrefix}{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"
+                    : null
             });
             await _db.SaveChangesAsync();
 
-            // Send file to the AI vector store for indexing
-            await _agentService.UploadFileToVectorStoreAsync(
-                tenantId, roomId, fileId, blobName, fileName);
+            if (_agentService.IsConfigured)
+            {
+                // Queue AI indexing in background so finalize returns immediately.
+                _aiIndexingQueue.Enqueue(tenantId, roomId, fileId, blobName, fileName);
+            }
 
             return new JsonResult(new { fileId });
         }
@@ -511,6 +552,10 @@ namespace twoSaaSCore.Pages.Files
 
             // Fetch file metadata before deletion for audit
             var metadata = await _catalog.GetFileAsync(tenantId, roomId, fileId, folderPath);
+            if (_agentService.IsConfigured)
+            {
+                await _agentService.RemoveFileFromVectorStoreAsync(tenantId, roomId, fileId);
+            }
             await _catalog.DeleteFileAsync(tenantId, roomId, fileId, folderPath);
 
             var deleteUserId = GetUserId();
@@ -545,6 +590,10 @@ namespace twoSaaSCore.Pages.Files
             foreach (var fileId in fileIds)
             {
                 var metadata = await _catalog.GetFileAsync(tenantId, roomId, fileId, folderPath);
+                if (_agentService.IsConfigured)
+                {
+                    await _agentService.RemoveFileFromVectorStoreAsync(tenantId, roomId, fileId);
+                }
                 await _catalog.DeleteFileAsync(tenantId, roomId, fileId, folderPath);
 
                 await _auditLogger.LogAsync(new AuditEntry(
@@ -658,8 +707,133 @@ namespace twoSaaSCore.Pages.Files
             return new JsonResult(result);
         }
 
-        // ----- NDA Acceptance -----
+        // ----- Web Link Management (AJAX) -----
 
+        public async Task<IActionResult> OnPostAddWebLinkAsync([FromForm] Guid roomId, [FromForm] string url)
+        {
+            if (roomId == Guid.Empty || string.IsNullOrWhiteSpace(url))
+                return new JsonResult(new { error = "Invalid request." }) { StatusCode = 400 };
+
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty)
+                return new JsonResult(new { error = "Forbidden." }) { StatusCode = 403 };
+
+            var userId = GetUserId();
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, userId, RoomPermission.ManageRoom))
+                return new JsonResult(new { error = "You do not have permission to manage web links." }) { StatusCode = 403 };
+
+            if (!_agentService.IsConfigured)
+                return new JsonResult(new { error = "AI assistant is not configured." }) { StatusCode = 503 };
+
+            url = url.Trim();
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) ||
+                (parsed.Scheme != "http" && parsed.Scheme != "https"))
+            {
+                return new JsonResult(new { error = "Please enter a valid HTTP or HTTPS URL." }) { StatusCode = 400 };
+            }
+
+            var exists = await _db.RoomWebLinks
+                .AnyAsync(w => w.TenantId == tenantId && w.RoomId == roomId && w.Url == url);
+            if (exists)
+                return new JsonResult(new { error = "This URL has already been added." }) { StatusCode = 409 };
+
+            try
+            {
+                var linkId = Guid.NewGuid();
+                var link = new RoomWebLink
+                {
+                    TenantId = tenantId,
+                    RoomId = roomId,
+                    LinkId = linkId,
+                    Url = url,
+                    Title = parsed.Host,
+                    VectorStoreFileId = $"{RoomAgentService.QueuedVectorStoreFileIdPrefix}{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+                    AddedByUserId = userId,
+                    AddedUtc = DateTimeOffset.UtcNow
+                };
+
+                _db.RoomWebLinks.Add(link);
+                await _db.SaveChangesAsync();
+
+                _aiIndexingQueue.EnqueueWebLink(tenantId, roomId, linkId, url);
+
+                return new JsonResult(new
+                {
+                    ok = true,
+                    linkId,
+                    title = link.Title,
+                    url = link.Url
+                });
+            }
+            catch
+            {
+                return new JsonResult(new { error = "Failed to add web link." }) { StatusCode = 500 };
+            }
+        }
+
+        public async Task<IActionResult> OnPostRemoveWebLinkAsync([FromForm] Guid roomId, [FromForm] Guid linkId)
+        {
+            if (roomId == Guid.Empty || linkId == Guid.Empty)
+                return new JsonResult(new { error = "Invalid request." }) { StatusCode = 400 };
+
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty)
+                return new JsonResult(new { error = "Forbidden." }) { StatusCode = 403 };
+
+            var userId = GetUserId();
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, userId, RoomPermission.ManageRoom))
+                return new JsonResult(new { error = "You do not have permission to manage web links." }) { StatusCode = 403 };
+
+            try
+            {
+                await _agentService.RemoveWebLinkFromVectorStoreAsync(tenantId, roomId, linkId);
+
+                var link = await _db.RoomWebLinks
+                    .FirstOrDefaultAsync(w => w.TenantId == tenantId && w.RoomId == roomId && w.LinkId == linkId);
+                if (link != null)
+                {
+                    _db.RoomWebLinks.Remove(link);
+                    await _db.SaveChangesAsync();
+                }
+
+                return new JsonResult(new { ok = true });
+            }
+            catch
+            {
+                return new JsonResult(new { error = "Failed to remove web link." }) { StatusCode = 500 };
+            }
+        }
+
+        public async Task<IActionResult> OnGetWebLinkStatusAsync(Guid roomId, string linkIds)
+        {
+            if (roomId == Guid.Empty || string.IsNullOrWhiteSpace(linkIds))
+                return new JsonResult(new { });
+
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty)
+                return Forbid();
+
+            if (!await _permissions.HasPermissionAsync(tenantId, roomId, GetUserId(), RoomPermission.ViewDocuments))
+                return Forbid();
+
+            if (!_agentService.IsConfigured)
+                return new JsonResult(new { });
+
+            var ids = linkIds
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => Guid.TryParse(s.Trim(), out var g) ? g : Guid.Empty)
+                .Where(g => g != Guid.Empty)
+                .ToList();
+
+            if (ids.Count == 0)
+                return new JsonResult(new { });
+
+            var statuses = await _agentService.GetWebLinkIndexingStatusesAsync(tenantId, roomId, ids);
+            var result = statuses.ToDictionary(kvp => kvp.Key.ToString(), kvp => kvp.Value.ToString());
+            return new JsonResult(result);
+        }
+
+        // ----- NDA Acceptance -----
         public async Task<IActionResult> OnPostCloneRoomAsync(Guid roomId)
         {
             if (roomId == Guid.Empty) return BadRequest();
