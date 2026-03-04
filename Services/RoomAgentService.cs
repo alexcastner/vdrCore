@@ -9,6 +9,9 @@ using Azure.Storage.Blobs.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
+using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
 using OpenAI.Assistants;
 using OpenAI.Files;
 using OpenAI.VectorStores;
@@ -41,6 +44,7 @@ namespace twoSaaSCore.Services
         private readonly ApplicationDbContext _db;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<RoomAgentService> _logger;
+        private readonly IRoomQaService _roomQaService;
 
         private AzureOpenAIClient? _openAiClient;
         private AssistantClient? _assistantClient;
@@ -64,12 +68,14 @@ namespace twoSaaSCore.Services
             IOptions<AzureBlobOptions> blobOptions,
             ApplicationDbContext db,
             IHttpClientFactory httpClientFactory,
+            IRoomQaService roomQaService,
             ILogger<RoomAgentService> logger)
         {
             _aiOptions = aiOptions.Value;
             _blobOptions = blobOptions.Value;
             _db = db;
             _httpClientFactory = httpClientFactory;
+            _roomQaService = roomQaService;
             _logger = logger;
             IsConfigured = !string.IsNullOrWhiteSpace(_aiOptions.Endpoint);
         }
@@ -143,6 +149,8 @@ namespace twoSaaSCore.Services
         private IQueryable<RoomAgent> RoomAgentsQuery() => _db.RoomAgents.IgnoreQueryFilters();
         private IQueryable<RoomFileRef> RoomFileRefsQuery() => _db.RoomFileRefs.IgnoreQueryFilters();
         private IQueryable<RoomWebLink> RoomWebLinksQuery() => _db.RoomWebLinks.IgnoreQueryFilters();
+        private IQueryable<RoomChatThread> RoomChatThreadsQuery() => _db.RoomChatThreads.IgnoreQueryFilters();
+        private IQueryable<RoomChatMessage> RoomChatMessagesQuery() => _db.RoomChatMessages.IgnoreQueryFilters();
 
         public async Task<(string AgentId, string VectorStoreId)> EnsureAgentAsync(
             Guid tenantId, Guid roomId, CancellationToken ct = default)
@@ -372,91 +380,214 @@ namespace twoSaaSCore.Services
             }
         }
 
-        public async Task<ChatResponse> ChatAsync(
-            Guid tenantId, Guid roomId, string userMessage, string? threadId = null,
-            CancellationToken ct = default)
+        private Kernel CreateKernel(Guid tenantId, Guid roomId, string userId, string? userEmail)
         {
             if (!IsConfigured) throw new InvalidOperationException("Azure AI is not configured.");
 
-            var (agentId, _) = await EnsureAgentAsync(tenantId, roomId, ct);
-            EnsureClients();
-
-            // Create or reuse thread
-            if (string.IsNullOrEmpty(threadId))
+            var credentialOptions = new DefaultAzureCredentialOptions();
+            if (!string.IsNullOrWhiteSpace(_aiOptions.TenantId))
             {
-                var thread = await _assistantClient!.CreateThreadAsync(cancellationToken: ct);
-                threadId = thread.Value.Id;
+                credentialOptions.TenantId = _aiOptions.TenantId;
             }
 
-            // Send user message
-            await _assistantClient!.CreateMessageAsync(
-                threadId,
-                MessageRole.User,
-                [MessageContent.FromText(userMessage)],
-                cancellationToken: ct);
-
-            // Run the assistant
-            var run = (await _assistantClient!.CreateRunAsync(threadId, agentId, cancellationToken: ct)).Value;
-
-            // Poll for completion
-            while (!run.Status.IsTerminal)
+            if (_aiOptions.ExcludeManagedIdentityInDevelopment &&
+                string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Development", StringComparison.OrdinalIgnoreCase))
             {
-                await Task.Delay(500, ct);
-                run = (await _assistantClient!.GetRunAsync(threadId, run.Id, ct)).Value;
+                credentialOptions.ExcludeManagedIdentityCredential = true;
             }
 
-            if (run.Status == RunStatus.Failed)
-            {
-                _logger.LogError("Assistant run failed for room {RoomId}: {Error}", roomId, run.LastError?.Message);
-                return new ChatResponse(
-                    "I'm sorry, I encountered an error processing your request. Please try again.",
-                    threadId, []);
-            }
+            var builder = Kernel.CreateBuilder();
+            builder.AddAzureOpenAIChatCompletion(
+                deploymentName: _aiOptions.ChatModel,
+                endpoint: _aiOptions.Endpoint,
+                credentials: new DefaultAzureCredential(credentialOptions));
 
-            // Extract response — get the latest assistant message
-            var responseText = "";
-            var citations = new List<ChatCitation>();
+            var kernel = builder.Build();
+            kernel.Plugins.AddFromObject(
+                new RoomQaSkill(_roomQaService, tenantId, roomId, userId, userEmail),
+                pluginName: "RoomQa");
 
-            await foreach (var msg in _assistantClient!.GetMessagesAsync(
-                threadId,
-                new MessageCollectionOptions { Order = MessageCollectionOrder.Descending },
-                ct))
+            return kernel;
+        }
+
+        public async Task<ChatResponse> ChatAsync(
+            Guid tenantId,
+            Guid roomId,
+            string userId,
+            string? userEmail,
+            string userMessage,
+            string? threadId = null,
+            CancellationToken ct = default)
+        {
+            if (!IsConfigured) throw new InvalidOperationException("Azure AI is not configured.");
+            if (string.IsNullOrWhiteSpace(userMessage)) throw new ArgumentException("Message cannot be empty.", nameof(userMessage));
+            if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("User id is required.", nameof(userId));
+
+            var roomThread = await GetOrCreateThreadAsync(tenantId, roomId, userId, threadId, ct);
+
+            var historyRows = await RoomChatMessagesQuery()
+                .Where(m => m.TenantId == tenantId && m.RoomId == roomId && m.ThreadId == roomThread.ThreadId)
+                .OrderBy(m => m.CreatedUtc)
+                .ToListAsync(ct);
+
+            var systemInstructions = await GetSystemInstructionsAsync(tenantId, roomId, ct);
+
+            var history = new ChatHistory();
+            history.AddSystemMessage($"""
+                {BuildEffectiveInstructions(systemInstructions)}
+
+                You can create Q&A entries when asked by invoking the RoomQa.submit_room_question function.
+                Use the function when the user asks to save or post a question into the room Q&A.
+                """);
+
+            foreach (var row in historyRows)
             {
-                if (msg.Role == MessageRole.Assistant)
+                if (row.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
                 {
-                    foreach (var content in msg.Content)
-                    {
-                        if (content.Text != null)
-                        {
-                            responseText = content.Text;
-                            if (content.TextAnnotations != null)
-                            {
-                                foreach (var ann in content.TextAnnotations)
-                                {
-                                    if (ann.InputFileId != null)
-                                    {
-                                        var originalName = await ResolveFileNameAsync(
-                                            tenantId, roomId, ann.InputFileId, ct);
-                                        citations.Add(new ChatCitation(
-                                            originalName ?? ann.InputFileId,
-                                            ann.TextToReplace));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    break; // only need the latest assistant message
+                    history.AddUserMessage(row.Content);
+                }
+                else if (row.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
+                {
+                    history.AddAssistantMessage(row.Content);
                 }
             }
 
-            if (string.IsNullOrEmpty(responseText))
+            history.AddUserMessage(userMessage.Trim());
+
+            var kernel = CreateKernel(tenantId, roomId, userId, userEmail);
+            var chat = kernel.GetRequiredService<IChatCompletionService>();
+
+            var settings = new AzureOpenAIPromptExecutionSettings
             {
-                return new ChatResponse(
-                    "No response was generated. Please try rephrasing your question.",
-                    threadId, []);
+                FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
+            };
+
+            var response = await chat.GetChatMessageContentAsync(history, settings, kernel, ct);
+            var responseText = string.IsNullOrWhiteSpace(response.Content)
+                ? "No response was generated. Please try rephrasing your question."
+                : response.Content!;
+
+            _db.RoomChatMessages.Add(new RoomChatMessage
+            {
+                TenantId = tenantId,
+                RoomId = roomId,
+                ThreadId = roomThread.ThreadId,
+                UserId = userId,
+                Role = "user",
+                Content = userMessage.Trim(),
+                CreatedUtc = DateTimeOffset.UtcNow
+            });
+
+            _db.RoomChatMessages.Add(new RoomChatMessage
+            {
+                TenantId = tenantId,
+                RoomId = roomId,
+                ThreadId = roomThread.ThreadId,
+                UserId = userId,
+                Role = "assistant",
+                Content = responseText,
+                CreatedUtc = DateTimeOffset.UtcNow
+            });
+
+            roomThread.LastActivityUtc = DateTimeOffset.UtcNow;
+            roomThread.MessageCount += 2;
+
+            if (string.IsNullOrWhiteSpace(roomThread.Title))
+            {
+                var first = userMessage.Trim();
+                roomThread.Title = first.Length <= 80 ? first : first[..80];
             }
 
-            return new ChatResponse(responseText, threadId, citations);
+            await _db.SaveChangesAsync(ct);
+
+            return new ChatResponse(responseText, roomThread.ThreadId, []);
+        }
+
+        public async Task SaveThreadAsync(
+            Guid tenantId,
+            Guid roomId,
+            string userId,
+            string threadId,
+            string? title,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("User id is required.", nameof(userId));
+            if (string.IsNullOrWhiteSpace(threadId)) throw new ArgumentException("Thread id is required.", nameof(threadId));
+
+            var thread = await RoomChatThreadsQuery()
+                .FirstOrDefaultAsync(t => t.TenantId == tenantId && t.RoomId == roomId && t.UserId == userId && t.ThreadId == threadId, ct);
+
+            if (thread == null)
+            {
+                throw new InvalidOperationException("Thread not found.");
+            }
+
+            thread.IsSaved = true;
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                var trimmed = title.Trim();
+                thread.Title = trimmed.Length <= 200 ? trimmed : trimmed[..200];
+            }
+
+            thread.LastActivityUtc = DateTimeOffset.UtcNow;
+            await _db.SaveChangesAsync(ct);
+        }
+
+        public async Task<List<ChatThreadSummary>> ListThreadsAsync(
+            Guid tenantId,
+            Guid roomId,
+            string userId,
+            bool savedOnly,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("User id is required.", nameof(userId));
+
+            var query = RoomChatThreadsQuery()
+                .Where(t => t.TenantId == tenantId && t.RoomId == roomId && t.UserId == userId);
+
+            if (savedOnly)
+            {
+                query = query.Where(t => t.IsSaved);
+            }
+
+            return await query
+                .OrderByDescending(t => t.LastActivityUtc)
+                .Select(t => new ChatThreadSummary(t.ThreadId, t.Title, t.LastActivityUtc, t.IsSaved, t.MessageCount))
+                .ToListAsync(ct);
+        }
+
+        private async Task<RoomChatThread> GetOrCreateThreadAsync(
+            Guid tenantId,
+            Guid roomId,
+            string userId,
+            string? threadId,
+            CancellationToken ct)
+        {
+            if (!string.IsNullOrWhiteSpace(threadId))
+            {
+                var existing = await RoomChatThreadsQuery()
+                    .FirstOrDefaultAsync(t => t.TenantId == tenantId && t.RoomId == roomId && t.UserId == userId && t.ThreadId == threadId, ct);
+                if (existing != null)
+                {
+                    return existing;
+                }
+            }
+
+            var newThread = new RoomChatThread
+            {
+                TenantId = tenantId,
+                RoomId = roomId,
+                UserId = userId,
+                ThreadId = Guid.NewGuid().ToString("N"),
+                IsSaved = false,
+                MessageCount = 0,
+                CreatedUtc = DateTimeOffset.UtcNow,
+                LastActivityUtc = DateTimeOffset.UtcNow
+            };
+
+            _db.RoomChatThreads.Add(newThread);
+            await _db.SaveChangesAsync(ct);
+            return newThread;
         }
 
         private async Task<string?> ResolveFileNameAsync(
@@ -522,10 +653,10 @@ namespace twoSaaSCore.Services
                     result[fr.FileId] = vsFile.Value.Status switch
                     {
                         VectorStoreFileStatus.InProgress => AiIndexingStatus.InProgress,
-                        VectorStoreFileStatus.Completed  => AiIndexingStatus.Completed,
-                        VectorStoreFileStatus.Failed     => AiIndexingStatus.Failed,
-                        VectorStoreFileStatus.Cancelled  => AiIndexingStatus.Cancelled,
-                        _                                => AiIndexingStatus.None
+                        VectorStoreFileStatus.Completed => AiIndexingStatus.Completed,
+                        VectorStoreFileStatus.Failed => AiIndexingStatus.Failed,
+                        VectorStoreFileStatus.Cancelled => AiIndexingStatus.Cancelled,
+                        _ => AiIndexingStatus.None
                     };
                 }
                 catch (Exception ex)
@@ -571,8 +702,7 @@ namespace twoSaaSCore.Services
 
             if (agent == null)
             {
-                // No agent yet — just create one so instructions are stored for when it's first used.
-                var (agentId, vectorStoreId) = await EnsureAgentAsync(tenantId, roomId, ct);
+                var _ = await EnsureAgentAsync(tenantId, roomId, ct);
                 agent = await RoomAgentsQuery()
                     .FirstOrDefaultAsync(a => a.TenantId == tenantId && a.RoomId == roomId, ct);
                 if (agent == null) return;
@@ -581,7 +711,6 @@ namespace twoSaaSCore.Services
             agent.SystemInstructions = trimmed;
             await _db.SaveChangesAsync(ct);
 
-            // Push updated instructions to the live assistant
             try
             {
                 EnsureClients();
@@ -598,8 +727,6 @@ namespace twoSaaSCore.Services
             }
         }
 
-        // ── Web link indexing ───────────────────────────────────────────
-
         public async Task IndexWebLinkAsync(
             Guid tenantId, Guid roomId, Guid linkId, string url,
             CancellationToken ct = default)
@@ -608,7 +735,6 @@ namespace twoSaaSCore.Services
 
             try
             {
-                // Mark in-progress
                 var link = await RoomWebLinksQuery()
                     .FirstOrDefaultAsync(w => w.TenantId == tenantId && w.RoomId == roomId && w.LinkId == linkId, ct);
                 if (link == null)
@@ -627,7 +753,6 @@ namespace twoSaaSCore.Services
                 httpClient.Timeout = TimeSpan.FromSeconds(30);
                 httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("VaultRoom/1.0");
 
-                // Fetch the URL
                 using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
                 response.EnsureSuccessStatusCode();
 
@@ -640,15 +765,13 @@ namespace twoSaaSCore.Services
                 if (contentType.Contains("pdf", StringComparison.OrdinalIgnoreCase) ||
                     url.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Direct PDF link — upload as PDF
                     var pdfFileName = ExtractFileNameFromUrl(url, ".pdf");
                     mainFileId = await UploadPdfToVectorStoreAsync(
-                        tenantId, roomId, linkId, url, link.AddedByUserId, vectorStoreId, pdfBytes: bodyBytes, pdfFileName, ct);
+                        tenantId, roomId, linkId, url, link.AddedByUserId, vectorStoreId, bodyBytes, pdfFileName, ct);
                     pdfCount = 1;
                 }
                 else
                 {
-                    // HTML page — extract text and upload as .txt
                     var html = Encoding.UTF8.GetString(bodyBytes);
                     var pageTitle = ExtractPageTitle(html) ?? url;
                     var pageText = ExtractTextFromHtml(html);
@@ -666,14 +789,12 @@ namespace twoSaaSCore.Services
                         _logger.LogInformation("Indexed web page text from {Url} as {FileName}.", url, txtFileName);
                     }
 
-                    // Discover and index linked PDFs
                     var pdfLinks = DiscoverPdfLinks(html, url);
                     foreach (var pdfUrl in pdfLinks.Take(MaxLinkedPdfs))
                     {
                         try
                         {
-                            using var pdfResponse = await httpClient.GetAsync(
-                                pdfUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+                            using var pdfResponse = await httpClient.GetAsync(pdfUrl, HttpCompletionOption.ResponseHeadersRead, ct);
                             if (!pdfResponse.IsSuccessStatusCode) continue;
 
                             var pdfBytes = await DownloadWithSizeLimitAsync(pdfResponse, MaxPdfDownloadBytes, ct);
@@ -692,7 +813,6 @@ namespace twoSaaSCore.Services
                         }
                     }
 
-                    // Update title
                     link = await RoomWebLinksQuery()
                         .FirstOrDefaultAsync(w => w.TenantId == tenantId && w.RoomId == roomId && w.LinkId == linkId, ct);
                     if (link != null && !string.IsNullOrWhiteSpace(pageTitle) && pageTitle != url)
@@ -701,7 +821,6 @@ namespace twoSaaSCore.Services
                     }
                 }
 
-                // Final status update
                 link = await RoomWebLinksQuery()
                     .FirstOrDefaultAsync(w => w.TenantId == tenantId && w.RoomId == roomId && w.LinkId == linkId, ct);
                 if (link != null)
@@ -722,12 +841,10 @@ namespace twoSaaSCore.Services
                     await _db.SaveChangesAsync(ct);
                 }
 
-                _logger.LogWarning(ex, "Failed to index web link {LinkId} ({Url}) for room {RoomId}.",
-                    linkId, url, roomId);
+                _logger.LogWarning(ex, "Failed to index web link {LinkId} ({Url}) for room {RoomId}.", linkId, url, roomId);
             }
         }
 
-        /// <summary>Uploads a PDF to the vector store, persists it as a room file, and uploads OCR companion if configured.</summary>
         private async Task<string?> UploadPdfToVectorStoreAsync(
             Guid tenantId,
             Guid roomId,
@@ -741,14 +858,12 @@ namespace twoSaaSCore.Services
         {
             await PersistWebDownloadedPdfAsync(tenantId, roomId, linkId, sourcePdfUrl, addedByUserId, pdfBytes, pdfFileName, ct);
 
-            // Upload raw PDF to vector store
             using var pdfStream = new MemoryStream(pdfBytes, writable: false);
             var uploaded = await _fileClient!.UploadFileAsync(
                 pdfStream, pdfFileName, FileUploadPurpose.Assistants, ct);
             var vsFile = await _vectorStoreClient!.AddFileToVectorStoreAsync(
                 vectorStoreId, uploaded.Value.Id, ct);
 
-            // OCR companion
             var ocrText = await TryExtractPdfTextWithOcrAsync(pdfBytes, ct);
             if (!string.IsNullOrWhiteSpace(ocrText))
             {
@@ -826,7 +941,6 @@ namespace twoSaaSCore.Services
             return $"{tenantId}/{roomId}/web-links/{linkId}/{hash}_{safeName}";
         }
 
-        /// <summary>Scans HTML for &lt;a href&gt; links ending in .pdf.</summary>
         private static List<string> DiscoverPdfLinks(string html, string baseUrl)
         {
             var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -849,7 +963,6 @@ namespace twoSaaSCore.Services
             return results.ToList();
         }
 
-        /// <summary>Downloads a response body with a size cap to avoid unbounded memory use.</summary>
         private static async Task<byte[]> DownloadWithSizeLimitAsync(
             HttpResponseMessage response, long maxBytes, CancellationToken ct)
         {
@@ -873,21 +986,15 @@ namespace twoSaaSCore.Services
             return buffer.ToArray();
         }
 
-        /// <summary>Strips HTML tags and returns visible text.</summary>
         private static string ExtractTextFromHtml(string html)
         {
-            // Remove script/style blocks
             var cleaned = Regex.Replace(html, @"<(script|style)[^>]*>[\s\S]*?</\1>", "", RegexOptions.IgnoreCase);
-            // Remove tags
             cleaned = Regex.Replace(cleaned, @"<[^>]+>", " ");
-            // Decode entities
             cleaned = System.Net.WebUtility.HtmlDecode(cleaned);
-            // Collapse whitespace
             cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim();
             return cleaned;
         }
 
-        /// <summary>Extracts the &lt;title&gt; content from HTML.</summary>
         private static string? ExtractPageTitle(string html)
         {
             var match = Regex.Match(html, @"<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -896,7 +1003,6 @@ namespace twoSaaSCore.Services
             return string.IsNullOrWhiteSpace(title) ? null : title;
         }
 
-        /// <summary>Derives a safe file name from a URL.</summary>
         private static string ExtractFileNameFromUrl(string url, string fallbackExtension)
         {
             try
@@ -906,12 +1012,11 @@ namespace twoSaaSCore.Services
                 if (!string.IsNullOrWhiteSpace(fileName) && fileName.Contains('.'))
                     return SanitizeFileName(fileName, fallbackExtension);
             }
-            catch { /* ignore parse errors */ }
+            catch { }
 
             return $"weblink-{Guid.NewGuid():N}{fallbackExtension}";
         }
 
-        /// <summary>Cleans a string for use as a file name.</summary>
         private static string SanitizeFileName(string name, string fallbackExtension)
         {
             var invalid = Path.GetInvalidFileNameChars();
@@ -1013,10 +1118,10 @@ namespace twoSaaSCore.Services
                     result[link.LinkId] = vsFile.Value.Status switch
                     {
                         VectorStoreFileStatus.InProgress => AiIndexingStatus.InProgress,
-                        VectorStoreFileStatus.Completed  => AiIndexingStatus.Completed,
-                        VectorStoreFileStatus.Failed     => AiIndexingStatus.Failed,
-                        VectorStoreFileStatus.Cancelled  => AiIndexingStatus.Cancelled,
-                        _                                => AiIndexingStatus.None
+                        VectorStoreFileStatus.Completed => AiIndexingStatus.Completed,
+                        VectorStoreFileStatus.Failed => AiIndexingStatus.Failed,
+                        VectorStoreFileStatus.Cancelled => AiIndexingStatus.Cancelled,
+                        _ => AiIndexingStatus.None
                     };
                 }
                 catch (Exception ex)

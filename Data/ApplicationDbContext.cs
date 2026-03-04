@@ -28,6 +28,8 @@ namespace twoSaaSCore.Data
         public DbSet<RoomFileRef> RoomFileRefs { get; set; } = null!;
         public DbSet<RoomAgent> RoomAgents { get; set; } = null!;
         public DbSet<RoomWebLink> RoomWebLinks { get; set; } = null!;
+        public DbSet<RoomChatThread> RoomChatThreads { get; set; } = null!;
+        public DbSet<RoomChatMessage> RoomChatMessages { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -219,6 +221,39 @@ namespace twoSaaSCore.Data
 
                 e.Property(w => w.AddedByUserId)
                  .HasMaxLength(450);
+            });
+
+            // RoomChatThread config
+            builder.Entity<RoomChatThread>(e =>
+            {
+                e.HasIndex(t => new { t.TenantId, t.RoomId, t.ThreadId })
+                    .IsUnique();
+
+                e.HasIndex(t => new { t.TenantId, t.RoomId, t.UserId, t.LastActivityUtc });
+
+                e.Property(t => t.ThreadId)
+                    .HasMaxLength(64);
+
+                e.Property(t => t.UserId)
+                    .HasMaxLength(450);
+
+                e.Property(t => t.Title)
+                    .HasMaxLength(200);
+            });
+
+            // RoomChatMessage config
+            builder.Entity<RoomChatMessage>(e =>
+            {
+                e.HasIndex(m => new { m.TenantId, m.RoomId, m.ThreadId, m.CreatedUtc });
+
+                e.Property(m => m.ThreadId)
+                    .HasMaxLength(64);
+
+                e.Property(m => m.UserId)
+                    .HasMaxLength(450);
+
+                e.Property(m => m.Role)
+                    .HasMaxLength(16);
             });
 
             // Apply global tenant filter to all entities implementing ITenantEntity

@@ -18,16 +18,29 @@
             AI Assistant — @Model.RoomName
         </h1>
     </div>
-    @if (Model.AiConfigured && Model.CanEditInstructions)
-    {
-        <button type="button" id="toggleInstructionsBtn" class="btn btn-outline-secondary btn-sm"
-                onclick="toggleInstructionsPanel()" title="System instructions">
-            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px;">
-                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-            Instructions
-        </button>
-    }
+    <div class="vr-page-header-actions" style="display:flex; gap:.5rem; align-items:center;">
+        @if (Model.AiConfigured)
+        {
+            <select id="savedThreadSelect" class="form-select form-select-sm" style="min-width:220px;">
+                <option value="">New thread</option>
+                @foreach (var thread in Model.SavedThreads)
+                {
+                    <option value="@thread.ThreadId">@(string.IsNullOrWhiteSpace(thread.Title) ? thread.ThreadId : thread.Title)</option>
+                }
+            </select>
+            <button type="button" id="saveThreadBtn" class="btn btn-outline-secondary btn-sm" onclick="saveCurrentThread()" title="Save current thread">Save Thread</button>
+        }
+        @if (Model.AiConfigured && Model.CanEditInstructions)
+        {
+            <button type="button" id="toggleInstructionsBtn" class="btn btn-outline-secondary btn-sm"
+                    onclick="toggleInstructionsPanel()" title="System instructions">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px;">
+                    <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+                Instructions
+            </button>
+        }
+    </div>
 </div>
 
 @if (Model.AiConfigured && Model.CanEditInstructions)
@@ -99,6 +112,57 @@ else
 @section Scripts {
 <script>
     let currentThreadId = '';
+
+    async function refreshSavedThreads() {
+        const select = document.getElementById('savedThreadSelect');
+        if (!select) return;
+
+        try {
+            const resp = await fetch(`?handler=SavedThreads&roomId=@Model.RoomId`);
+            if (!resp.ok) return;
+            const items = await resp.json();
+
+            const current = select.value;
+            select.innerHTML = '<option value="">New thread</option>';
+            for (const t of items) {
+                const opt = document.createElement('option');
+                opt.value = t.threadId;
+                opt.textContent = (t.title && t.title.trim()) ? t.title : t.threadId;
+                select.appendChild(opt);
+            }
+            if (currentThreadId) {
+                select.value = currentThreadId;
+            } else if (current) {
+                select.value = current;
+            }
+        } catch { }
+    }
+
+    async function saveCurrentThread() {
+        if (!currentThreadId) {
+            alert('Start a conversation first, then save the thread.');
+            return;
+        }
+
+        const title = prompt('Thread title (optional):') || '';
+        const token = document.querySelector('[name="__RequestVerificationToken"]')?.value;
+
+        const body = new URLSearchParams();
+        body.append('roomId', '@Model.RoomId');
+        body.append('threadId', currentThreadId);
+        body.append('title', title);
+        body.append('__RequestVerificationToken', token);
+
+        const resp = await fetch('?handler=SaveThread', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        });
+
+        if (resp.ok) {
+            await refreshSavedThreads();
+        }
+    }
 
     function toggleInstructionsPanel() {
         const panel = document.getElementById('instructionsPanel');
@@ -251,6 +315,11 @@ else
             currentThreadId = data.threadId || '';
             document.getElementById('threadId').value = currentThreadId;
 
+            const threadSelect = document.getElementById('savedThreadSelect');
+            if (threadSelect && currentThreadId) {
+                threadSelect.value = currentThreadId;
+            }
+
             appendMessage('assistant', formatMarkdown(data.message));
             appendCitations(data.citations);
         } catch {
@@ -268,5 +337,12 @@ else
         this.style.height = 'auto';
         this.style.height = Math.min(this.scrollHeight, 120) + 'px';
     });
+
+    document.getElementById('savedThreadSelect')?.addEventListener('change', function () {
+        currentThreadId = this.value || '';
+        document.getElementById('threadId').value = currentThreadId;
+    });
+
+    refreshSavedThreads();
 </script>
 }

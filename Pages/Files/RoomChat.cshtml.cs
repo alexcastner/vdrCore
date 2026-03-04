@@ -53,6 +53,9 @@ namespace twoSaaSCore.Pages.Files
         /// <summary>Whether the current user can edit system instructions (Owner/Admin only).</summary>
         public bool CanEditInstructions { get; private set; }
 
+        /// <summary>Saved chat threads for the current user in this room.</summary>
+        public List<ChatThreadSummary> SavedThreads { get; private set; } = [];
+
         private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
 
         public async Task<IActionResult> OnGetAsync()
@@ -74,9 +77,58 @@ namespace twoSaaSCore.Pages.Files
             if (_agentService.IsConfigured)
             {
                 SystemInstructions = await _agentService.GetSystemInstructionsAsync(tenantId, RoomId);
+                SavedThreads = await _agentService.ListThreadsAsync(tenantId, RoomId, userId, savedOnly: true);
             }
 
             return Page();
+        }
+
+        /// <summary>AJAX handler to save a chat thread for later reuse.</summary>
+        public async Task<IActionResult> OnPostSaveThreadAsync(
+            [FromForm] Guid roomId,
+            [FromForm] string threadId,
+            [FromForm] string? title)
+        {
+            if (roomId == Guid.Empty || string.IsNullOrWhiteSpace(threadId))
+                return new JsonResult(new { error = "Invalid request." }) { StatusCode = 400 };
+
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty)
+                return new JsonResult(new { error = "Forbidden." }) { StatusCode = 403 };
+
+            var userId = GetUserId();
+            var perms = await _permissions.GetEffectivePermissionsAsync(tenantId, roomId, userId);
+            if (!perms.HasFlag(RoomPermission.ViewDocuments))
+                return new JsonResult(new { error = "Forbidden." }) { StatusCode = 403 };
+
+            try
+            {
+                await _agentService.SaveThreadAsync(tenantId, roomId, userId, threadId, title);
+                return new JsonResult(new { ok = true });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return new JsonResult(new { error = ex.Message }) { StatusCode = 404 };
+            }
+        }
+
+        /// <summary>AJAX handler to list saved chat threads for the current user.</summary>
+        public async Task<IActionResult> OnGetSavedThreadsAsync(Guid roomId)
+        {
+            if (roomId == Guid.Empty)
+                return new JsonResult(new { });
+
+            var tenantId = _tenantProvider.GetTenantId();
+            if (tenantId == Guid.Empty)
+                return Forbid();
+
+            var userId = GetUserId();
+            var perms = await _permissions.GetEffectivePermissionsAsync(tenantId, roomId, userId);
+            if (!perms.HasFlag(RoomPermission.ViewDocuments))
+                return Forbid();
+
+            var threads = await _agentService.ListThreadsAsync(tenantId, roomId, userId, savedOnly: true);
+            return new JsonResult(threads);
         }
 
         /// <summary>AJAX handler to save custom system instructions.</summary>
@@ -136,7 +188,13 @@ namespace twoSaaSCore.Pages.Files
 
             try
             {
-                var response = await _agentService.ChatAsync(tenantId, roomId, message.Trim(), threadId);
+                var response = await _agentService.ChatAsync(
+                    tenantId,
+                    roomId,
+                    userId,
+                    userEmail,
+                    message.Trim(),
+                    threadId);
 
                 // Audit log the interaction
                 await _auditLogger.LogAsync(new AuditEntry(

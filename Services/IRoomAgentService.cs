@@ -8,6 +8,9 @@ namespace twoSaaSCore.Services
     public record ChatResponse(string Message, string ThreadId, List<ChatCitation> Citations);
     public record ChatCitation(string FileName, string? Snippet);
 
+    /// <summary>Saved thread summary for room chat history UI.</summary>
+    public record ChatThreadSummary(string ThreadId, string? Title, DateTimeOffset LastActivityUtc, bool IsSaved, int MessageCount);
+
     /// <summary>Indexing status of a file in the vector store.</summary>
     public enum AiIndexingStatus
     {
@@ -26,7 +29,13 @@ namespace twoSaaSCore.Services
         Task UploadFileToVectorStoreAsync(Guid tenantId, Guid roomId, Guid fileId, string blobName, string fileName, CancellationToken ct = default);
         Task RemoveFileFromVectorStoreAsync(Guid tenantId, Guid roomId, Guid fileId, CancellationToken ct = default);
         Task DeleteAgentAsync(Guid tenantId, Guid roomId, CancellationToken ct = default);
-        Task<ChatResponse> ChatAsync(Guid tenantId, Guid roomId, string userMessage, string? threadId = null, CancellationToken ct = default);
+        Task<ChatResponse> ChatAsync(Guid tenantId, Guid roomId, string userId, string? userEmail, string userMessage, string? threadId = null, CancellationToken ct = default);
+
+        /// <summary>Marks a thread as saved and optionally updates the thread title.</summary>
+        Task SaveThreadAsync(Guid tenantId, Guid roomId, string userId, string threadId, string? title, CancellationToken ct = default);
+
+        /// <summary>Lists chat threads for a user in a room.</summary>
+        Task<List<ChatThreadSummary>> ListThreadsAsync(Guid tenantId, Guid roomId, string userId, bool savedOnly, CancellationToken ct = default);
 
         /// <summary>
         /// Checks the vector store indexing status for a batch of files.
