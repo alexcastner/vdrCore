@@ -82,7 +82,12 @@ namespace twoSaaSCore.Areas.Identity.Pages.Account
             if (result.Succeeded)
             {
                 _logger.LogInformation("User {UserId} logged in with SMS 2FA.", await _userManager.GetUserIdAsync(user));
-                return LocalRedirect(ReturnUrl ?? "~/");
+                var target = ReturnUrl;
+                if (string.IsNullOrWhiteSpace(target))
+                {
+                    target = Url.Page("/Files/Index") ?? "/Files/Index";
+                }
+                return LocalRedirect(target);
             }
             if (result.IsLockedOut)
             {

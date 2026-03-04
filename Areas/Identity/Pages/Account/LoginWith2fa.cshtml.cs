@@ -97,7 +97,7 @@ namespace twoSaaSCore.Areas.Identity.Pages.Account
                 return Page();
             }
 
-            returnUrl = returnUrl ?? Url.Content("~/");
+            returnUrl ??= Url.Page("/Files/Index") ?? "/Files/Index";
 
             var user = await _signInManager.GetTwoFactorAuthenticationUserAsync();
             if (user == null)
