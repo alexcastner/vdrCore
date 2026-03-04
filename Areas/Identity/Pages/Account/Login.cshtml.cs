@@ -51,7 +51,7 @@ namespace twoSaaSCore.Areas.Identity.Pages.Account
 
         public async Task<IActionResult> OnPostAsync(string? returnUrl = null)
         {
-            returnUrl ??= "/";
+            returnUrl ??= Url.Page("/Files/Index") ?? "/Files/Index";
 
             if (!ModelState.IsValid)
                 return Page();
