@@ -68,6 +68,32 @@ Configuration
 - appsettings.json
   - AzureBlobs: ConnectionString, Container, CreateContainerIfNotExists
   - For local dev with Azurite, ConnectionString is pre-set to UseDevelopmentStorage=true
+- Azure Blob Storage CORS
+  - The in-browser PDF viewer (pdf.js) fetches documents directly from Azure Blob Storage using SAS URLs
+  - The storage account must have a CORS rule allowing your application's origin, otherwise the browser blocks the request with a "Failed to fetch" error
+  - Run via Azure CLI:
+    ```
+    az storage cors add \
+      --services b \
+      --methods GET HEAD OPTIONS \
+      --origins "https://localhost:7133" \
+      --allowed-headers "*" \
+      --exposed-headers "Content-Length,Content-Range,Content-Type" \
+      --max-age 3600 \
+      --account-name <your-storage-account>
+    ```
+  - For production, add your production origin as well:
+    ```
+    az storage cors add \
+      --services b \
+      --methods GET HEAD OPTIONS \
+      --origins "https://yourdomain.com" \
+      --allowed-headers "*" \
+      --exposed-headers "Content-Length,Content-Range,Content-Type" \
+      --max-age 3600 \
+      --account-name <your-storage-account>
+    ```
+  - Alternatively, configure this in the Azure Portal: Storage account ? Settings ? Resource sharing (CORS)
 
 Development notes
 - Migrations must be created/updated after these changes to add Tenant, TenantFiles tables and new columns (TenantId, Subdomain) to AspNetUsers
@@ -88,6 +114,11 @@ Security
 
 Routing and redirects
 - After login, redirects are constructed as https://{sub}.{rootHost}:{port}/ when the current request includes a port; otherwise https://{sub}.{rootHost}/
+
+Troubleshooting
+- PDF viewer shows "Failed to fetch" / UnknownErrorException
+  - Azure Blob Storage CORS is not configured for your application's origin
+  - Add a CORS rule as described in the Configuration section above
 
 Files added or updated
 - Models/Tenant.cs

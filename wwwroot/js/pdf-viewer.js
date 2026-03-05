@@ -1,131 +1,238 @@
 // pdf-viewer.js (ES module)
-// Exports an initialization function; no reliance on global pdfjsLib or window config.
+// Self-contained PDF viewer — loads pdf.js internally, no external wiring needed.
 
-export async function initPdfViewer(config, pdfjsLib) {
+const PDFJS_VERSION = "5.4.149";
+const PDFJS_CDN = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}`;
+
+const ZOOM_STEP = 0.2;
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 5;
+const RESIZE_DEBOUNCE_MS = 200;
+
+/**
+ * Initialise the PDF viewer.
+ * @param {{ url: string }} config — must contain the PDF source URL.
+ */
+export async function initPdfViewer(config) {
     if (!config?.url) {
         console.error("PDF viewer: missing config.url");
         return;
     }
 
+    // Razor HTML-encodes `&` ? `&amp;` inside attribute/JS strings; fix that.
     if (config.url.includes("&amp;")) {
         config.url = config.url.replace(/&amp;/g, "&");
     }
 
     const canvas = document.getElementById("pdfCanvas");
+    if (!canvas) {
+        console.error("PDF viewer: #pdfCanvas not found");
+        return;
+    }
     const ctx = canvas.getContext("2d");
 
-    const btnPrev = document.getElementById("btnPrev");
-    const btnNext = document.getElementById("btnNext");
-    const btnZoomIn = document.getElementById("btnZoomIn");
+    const container  = document.getElementById("pdfContainer");
+    const btnPrev    = document.getElementById("btnPrev");
+    const btnNext    = document.getElementById("btnNext");
+    const btnZoomIn  = document.getElementById("btnZoomIn");
     const btnZoomOut = document.getElementById("btnZoomOut");
     const btnFitWidth = document.getElementById("btnFitWidth");
-    const btnPrint = document.getElementById("btnPrint");
-    const pageNumSpan = document.getElementById("pageNum");
+    const btnPrint   = document.getElementById("btnPrint");
+    const pageNumSpan   = document.getElementById("pageNum");
     const pageCountSpan = document.getElementById("pageCount");
-    const container = document.getElementById("pdfContainer");
+    const zoomLevelSpan = document.getElementById("zoomLevel");
 
     let pdfDoc = null;
     let currentPage = 1;
-    let scale = 1.2;
-    let rendering = false;
-    let pendingPage = null;
-    let lastFitWidth = false;
+    let scale = 1.5;
+    let fitWidthMode = false;
+    let activeRenderTask = null;
+
+    showLoading(true);
 
     try {
-        pdfDoc = await pdfjsLib.getDocument(config.url).promise;
+        const pdfjsLib = await import(`${PDFJS_CDN}/+esm`);
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/build/pdf.worker.mjs`;
+
+        pdfDoc = await pdfjsLib.getDocument({
+            url: config.url,
+            withCredentials: false,
+        }).promise;
+
         pageCountSpan.textContent = pdfDoc.numPages.toString();
         enableControls();
-        await queueRenderPage(1);
-    } catch (e) {
-        console.error("Failed to load PDF:", e);
-        container.innerHTML = "<div class='text-danger p-3'>Failed to load PDF.</div>";
+
+        fitWidthMode = true;
+        await renderPage(currentPage);
+    } catch (err) {
+        console.error("PDF viewer — load failed:", err);
+        showError(err);
         return;
+    } finally {
+        showLoading(false);
     }
 
-    function enableControls() {
-        [btnPrev, btnNext, btnZoomIn, btnZoomOut, btnFitWidth, btnPrint]
-            .forEach(b => b && (b.disabled = false));
-    }
+    // ?? Rendering ???????????????????????????????????????????????
 
     async function renderPage(num) {
-        rendering = true;
-        const page = await pdfDoc.getPage(num);
+        if (activeRenderTask) {
+            activeRenderTask.cancel();
+            activeRenderTask = null;
+        }
 
-        // Auto-fit width only if last action was Fit Width
+        const page = await pdfDoc.getPage(num);
+        const dpr = window.devicePixelRatio || 1;
+
         let effectiveScale = scale;
-        if (lastFitWidth) {
-            const unscaledViewport = page.getViewport({ scale: 1 });
-            const available = container.clientWidth - 20;
-            effectiveScale = available / unscaledViewport.width;
+        if (fitWidthMode) {
+            const unscaled = page.getViewport({ scale: 1 });
+            effectiveScale = (container.clientWidth - 24) / unscaled.width;
+            scale = effectiveScale;
         }
 
         const viewport = page.getViewport({ scale: effectiveScale });
-        canvas.height = Math.floor(viewport.height);
-        canvas.width = Math.floor(viewport.width);
 
-        const renderCtx = { canvasContext: ctx, viewport };
-        await page.render(renderCtx).promise;
+        canvas.width  = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width  = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
 
-        if (!lastFitWidth) {
-            scale = effectiveScale; // keep explicit scale when not fit-width mode
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        const renderTask = page.render({ canvasContext: ctx, viewport });
+        activeRenderTask = renderTask;
+
+        try {
+            await renderTask.promise;
+        } catch (err) {
+            if (err?.name === "RenderingCancelledException") return;
+            throw err;
+        } finally {
+            if (activeRenderTask === renderTask) activeRenderTask = null;
         }
 
-        rendering = false;
-        if (pendingPage !== null) {
-            const p = pendingPage;
-            pendingPage = null;
-            renderPage(p);
-        }
         pageNumSpan.textContent = num.toString();
+        updateZoomDisplay(effectiveScale);
+        updateNavButtons();
     }
 
-    async function queueRenderPage(num) {
-        if (rendering) {
-            pendingPage = num;
-        } else {
-            await renderPage(num);
+    // ?? Controls ????????????????????????????????????????????????
+
+    function enableControls() {
+        [btnPrev, btnNext, btnZoomIn, btnZoomOut, btnFitWidth, btnPrint]
+            .forEach(b => { if (b) b.disabled = false; });
+    }
+
+    function updateNavButtons() {
+        if (btnPrev) btnPrev.disabled = currentPage <= 1;
+        if (btnNext) btnNext.disabled = currentPage >= pdfDoc.numPages;
+    }
+
+    function updateZoomDisplay(s) {
+        if (zoomLevelSpan) zoomLevelSpan.textContent = `${Math.round(s * 100)}%`;
+    }
+
+    async function goToPage(num) {
+        num = Math.max(1, Math.min(num, pdfDoc.numPages));
+        if (num === currentPage) return;
+        currentPage = num;
+        await renderPage(currentPage);
+    }
+
+    async function zoom(delta) {
+        fitWidthMode = false;
+        scale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale + delta));
+        await renderPage(currentPage);
+    }
+
+    async function fitWidth() {
+        fitWidthMode = true;
+        await renderPage(currentPage);
+    }
+
+    btnPrev?.addEventListener("click", () => goToPage(currentPage - 1));
+    btnNext?.addEventListener("click", () => goToPage(currentPage + 1));
+    btnZoomIn?.addEventListener("click", () => zoom(ZOOM_STEP));
+    btnZoomOut?.addEventListener("click", () => zoom(-ZOOM_STEP));
+    btnFitWidth?.addEventListener("click", () => fitWidth());
+    btnPrint?.addEventListener("click", () => window.open(config.url, "_blank", "noopener"));
+
+    // ?? Keyboard shortcuts ??????????????????????????????????????
+
+    document.addEventListener("keydown", (e) => {
+        if (!pdfDoc) return;
+        const target = e.target;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+        switch (e.key) {
+            case "ArrowLeft":
+            case "ArrowUp":
+                e.preventDefault();
+                goToPage(currentPage - 1);
+                break;
+            case "ArrowRight":
+            case "ArrowDown":
+                e.preventDefault();
+                goToPage(currentPage + 1);
+                break;
+            case "+":
+            case "=":
+                e.preventDefault();
+                zoom(ZOOM_STEP);
+                break;
+            case "-":
+                e.preventDefault();
+                zoom(-ZOOM_STEP);
+                break;
         }
-    }
-
-    btnPrev?.addEventListener("click", async () => {
-        if (currentPage <= 1) return;
-        currentPage--;
-        await queueRenderPage(currentPage);
     });
 
-    btnNext?.addEventListener("click", async () => {
-        if (currentPage >= pdfDoc.numPages) return;
-        currentPage++;
-        await queueRenderPage(currentPage);
-    });
+    // ?? Responsive resize (fit-width mode only) ?????????????????
 
-    btnZoomIn?.addEventListener("click", async () => {
-        lastFitWidth = false;
-        scale = Math.min(scale + 0.15, 6);
-        await queueRenderPage(currentPage);
-    });
-
-    btnZoomOut?.addEventListener("click", async () => {
-        lastFitWidth = false;
-        scale = Math.max(scale - 0.15, 0.25);
-        await queueRenderPage(currentPage);
-    });
-
-    btnFitWidth?.addEventListener("click", async () => {
-        lastFitWidth = true;
-        await queueRenderPage(currentPage);
-    });
-
-    btnPrint?.addEventListener("click", () => {
-        // Basic print strategy; a more advanced implementation could render to an iframe
-        window.open(config.url, "_blank", "noopener");
-    });
-
-    // Re-render if container size changes and we are in fit-width mode
     let resizeTimer = null;
     window.addEventListener("resize", () => {
-        if (!lastFitWidth) return;
+        if (!fitWidthMode || !pdfDoc) return;
         clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => queueRenderPage(currentPage), 150);
+        resizeTimer = setTimeout(() => renderPage(currentPage), RESIZE_DEBOUNCE_MS);
     });
+
+    // ?? Helpers ?????????????????????????????????????????????????
+
+    function showLoading(show) {
+        let spinner = container?.querySelector(".vr-pdf-loading");
+        if (show && container) {
+            if (!spinner) {
+                spinner = document.createElement("div");
+                spinner.className = "vr-pdf-loading";
+                spinner.innerHTML = `
+                    <div class="vr-pdf-spinner"></div>
+                    <span>Loading document…</span>`;
+                container.prepend(spinner);
+            }
+            canvas.style.display = "none";
+        } else {
+            spinner?.remove();
+            if (canvas) canvas.style.display = "";
+        }
+    }
+
+    function showError(err) {
+        if (!container) return;
+        const msg = err?.name === "MissingPDFException"
+            ? "PDF file not found. The link may have expired."
+            : err?.name === "UnknownErrorException" && err?.message?.includes("Failed to fetch")
+                ? "Could not fetch the PDF. The SAS link may have expired — try reloading the page."
+                : "Failed to load the document.";
+
+        container.innerHTML = `
+            <div class="vr-pdf-error">
+                <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" fill="none"
+                     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>
+                    <line x1="9" y1="9" x2="15" y2="15"/>
+                </svg>
+                <p>${msg}</p>
+                <button onclick="location.reload()" class="btn btn-sm btn-outline-primary mt-2">Reload</button>
+            </div>`;
+    }
 }

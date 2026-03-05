@@ -1,5 +1,4 @@
 @page "/Files/ViewPdf"
-@using System.Text.Json
 @model twoSaaSCore.Pages.Files.ViewPdfModel
 @{
     ViewData["Title"] = "View PDF";
@@ -13,22 +12,23 @@
         </div>
         <div class="vr-viewer-toolbar" id="pdfToolbar">
             <div class="vr-toolbar-group">
-                <button id="btnPrev" class="vr-toolbar-btn" disabled title="Previous page">
+                <button id="btnPrev" class="vr-toolbar-btn" disabled title="Previous page (?)">
                     <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
                 </button>
                 <span class="vr-toolbar-label">
                     <span id="pageNum">0</span> / <span id="pageCount">0</span>
                 </span>
-                <button id="btnNext" class="vr-toolbar-btn" disabled title="Next page">
+                <button id="btnNext" class="vr-toolbar-btn" disabled title="Next page (?)">
                     <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
                 </button>
             </div>
             <div class="vr-toolbar-divider"></div>
             <div class="vr-toolbar-group">
-                <button id="btnZoomOut" class="vr-toolbar-btn" disabled title="Zoom out">
+                <button id="btnZoomOut" class="vr-toolbar-btn" disabled title="Zoom out (?)">
                     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
                 </button>
-                <button id="btnZoomIn" class="vr-toolbar-btn" disabled title="Zoom in">
+                <span id="zoomLevel" class="vr-toolbar-label">100%</span>
+                <button id="btnZoomIn" class="vr-toolbar-btn" disabled title="Zoom in (+)">
                     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
                 </button>
                 <button id="btnFitWidth" class="vr-toolbar-btn" disabled title="Fit width">
@@ -42,7 +42,6 @@
         </div>
     </div>
 
-    <!-- Watermark -->
     <div class="vr-watermark">CONFIDENTIAL</div>
 
     <div id="pdfContainer" class="vr-viewer-canvas">
@@ -50,11 +49,41 @@
     </div>
 </div>
 
+<style>
+    .vr-pdf-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: .75rem;
+        padding: 3rem;
+        color: var(--vr-text-muted);
+        font-size: .9rem;
+    }
+    .vr-pdf-spinner {
+        width: 32px; height: 32px;
+        border: 3px solid var(--vr-border);
+        border-top-color: var(--vr-accent);
+        border-radius: 50%;
+        animation: vr-spin .7s linear infinite;
+    }
+    @@keyframes vr-spin { to { transform: rotate(360deg); } }
+    .vr-pdf-error {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: .5rem;
+        padding: 3rem;
+        color: var(--vr-danger);
+        text-align: center;
+    }
+    .vr-pdf-error p { margin: 0; font-size: .9rem; }
+</style>
+
 @section Scripts {
     <script type="module">
-        import pdfjsDist from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.149/+esm'
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.149/build/pdf.worker.mjs`;
         import { initPdfViewer } from "/js/pdf-viewer.js";
-        initPdfViewer({ url: "@Model.PdfSourceUrl" }, pdfjsLib);
+        initPdfViewer({ url: @Json.Serialize(Model.PdfSourceUrl) });
     </script>
 }
