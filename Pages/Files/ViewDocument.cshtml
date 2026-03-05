@@ -12,6 +12,8 @@
             <span class="@badgeClass">@ext</span>
             <h1>@Model.FileName</h1>
         </div>
+        @if (!Model.ShowDownloadFallback)
+        {
         <div class="vr-viewer-toolbar" id="pdfToolbar">
             <div class="vr-toolbar-group">
                 <button id="btnPrev" class="vr-toolbar-btn" disabled title="Previous page (?)">
@@ -42,13 +44,35 @@
                 <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </a>
         </div>
+        }
     </div>
 
-    <div class="vr-watermark">CONFIDENTIAL</div>
+    @if (Model.ShowDownloadFallback)
+    {
+    <div class="vr-download-fallback">
+        <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        <h2>Preview not available</h2>
+        <p>This document cannot be previewed in the browser. You can download it instead.</p>
+        <a class="vr-download-btn"
+           asp-page="/Files/DownloadFile"
+           asp-route-roomId="@Model.RoomId"
+           asp-route-fileId="@Model.FileId">
+            Download @Model.FileName
+        </a>
+    </div>
+    }
+    else
+    {
+    <div class="vr-watermark">@Model.WatermarkText</div>
 
     <div id="pdfContainer" class="vr-viewer-canvas">
         <canvas id="pdfCanvas"></canvas>
     </div>
+    }
 </div>
 
 <style>
@@ -81,11 +105,51 @@
         text-align: center;
     }
     .vr-pdf-error p { margin: 0; font-size: .9rem; }
+    .vr-download-fallback {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        padding: 4rem 2rem;
+        text-align: center;
+        color: var(--vr-text-muted);
+    }
+    .vr-download-fallback h2 {
+        margin: 0;
+        font-size: 1.25rem;
+        color: var(--vr-text);
+    }
+    .vr-download-fallback p {
+        margin: 0;
+        font-size: .9rem;
+        max-width: 28rem;
+    }
+    .vr-download-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: .5rem;
+        padding: .625rem 1.25rem;
+        background: var(--vr-accent);
+        color: #fff;
+        border-radius: .375rem;
+        text-decoration: none;
+        font-weight: 500;
+        font-size: .9rem;
+        transition: background .15s;
+    }
+    .vr-download-btn:hover {
+        background: var(--vr-accent-hover, var(--vr-accent));
+        color: #fff;
+    }
 </style>
 
+@if (!Model.ShowDownloadFallback)
+{
 @section Scripts {
     <script type="module">
         import { initPdfViewer } from "/js/pdf-viewer.js";
         initPdfViewer({ url: @Json.Serialize(Model.PdfSourceUrl) });
     </script>
+}
 }
