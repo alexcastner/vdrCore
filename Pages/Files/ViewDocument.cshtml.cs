@@ -2,12 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Syncfusion.DocIO;
-using Syncfusion.DocIO.DLS;
-using Syncfusion.DocIORenderer;
-using Syncfusion.Pdf;
-using Syncfusion.XlsIO;
-using Syncfusion.XlsIORenderer;
+using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -27,10 +22,9 @@ namespace twoSaaSCore.Pages.Files
         private readonly IAuditLogger _auditLogger;
         private readonly IRoomPermissionService _permissions;
         private readonly UserManager<ApplicationUser> _userManager;
+        private readonly DocumentConversionOptions _docOptions;
 
-        private const long MaxOfficeBytesForConversion = 25 * 1024 * 1024; // shared cap
-
-        public ViewDocumentModel(ITenantProvider tenantProvider, IRoomFileCatalog catalog, IFileStorage storage, IAuditLogger auditLogger, IRoomPermissionService permissions, UserManager<ApplicationUser> userManager)
+        public ViewDocumentModel(ITenantProvider tenantProvider, IRoomFileCatalog catalog, IFileStorage storage, IAuditLogger auditLogger, IRoomPermissionService permissions, UserManager<ApplicationUser> userManager, IOptions<DocumentConversionOptions> docOptions)
         {
             _tenantProvider = tenantProvider;
             _catalog = catalog;
@@ -38,6 +32,7 @@ namespace twoSaaSCore.Pages.Files
             _auditLogger = auditLogger;
             _permissions = permissions;
             _userManager = userManager;
+            _docOptions = docOptions.Value;
         }
 
         [BindProperty(SupportsGet = true)]
@@ -48,6 +43,10 @@ namespace twoSaaSCore.Pages.Files
 
         public string FileName { get; private set; } = string.Empty;
         public string PdfSourceUrl { get; private set; } = string.Empty;
+        public string WatermarkText { get; private set; } = string.Empty;
+
+        /// <summary>When true the view should show a "download only" message instead of the PDF viewer.</summary>
+        public bool ShowDownloadFallback { get; private set; }
 
         public async Task<IActionResult> OnGetAsync()
         {
@@ -68,20 +67,18 @@ namespace twoSaaSCore.Pages.Files
             if (IsPdf(originalName, metadata.ContentType))
                 return RedirectToPage("/Files/ViewPdf", new { RoomId, FileId });
 
-            if (!IsConvertibleToPdf(originalName, metadata.ContentType))
-                return BadRequest("Unsupported format. Only .docx or .xlsx can be converted.");
+            if (!IsOfficeFormat(originalName, metadata.ContentType))
+                return BadRequest("Unsupported format for viewing.");
 
+            // Try to serve a previously cached PDF conversion
             var cacheBlobName = BuildCacheBlobName(metadata.BlobName, FileId);
-
             var cacheValid = false;
-            const string tagSourceBlob = "SrcBlob";
-            const string tagSourceSize = "SrcSize";
 
             try
             {
                 var tags = await _storage.GetTagsAsync(cacheBlobName);
-                if (tags.TryGetValue(tagSourceBlob, out var taggedBlob) &&
-                    tags.TryGetValue(tagSourceSize, out var taggedSize) &&
+                if (tags.TryGetValue("SrcBlob", out var taggedBlob) &&
+                    tags.TryGetValue("SrcSize", out var taggedSize) &&
                     taggedBlob == metadata.BlobName &&
                     taggedSize == metadata.Size.ToString())
                 {
@@ -93,47 +90,30 @@ namespace twoSaaSCore.Pages.Files
                 cacheValid = false;
             }
 
-            if (!cacheValid)
+            if (cacheValid)
             {
-                if (metadata.Size > MaxOfficeBytesForConversion)
-                    return BadRequest($"Document exceeds max convertible size ({MaxOfficeBytesForConversion / (1024 * 1024)} MB).");
-
-                await using var sourceStream = await _storage.OpenReadAsync(metadata.BlobName);
-                var mem = PrepareBufferedStream(sourceStream, metadata.Size);
-
                 try
                 {
-                    await using var pdfMs = await ConvertToPdfAsync(mem, originalName);
-                    pdfMs.Position = 0;
-                    await _storage.UploadAsync(cacheBlobName, pdfMs, "application/pdf");
-
-                    var tags = new Dictionary<string, string>
-                    {
-                        { tagSourceBlob, metadata.BlobName },
-                        { tagSourceSize, metadata.Size.ToString() },
-                        { "CreatedUtc", DateTime.UtcNow.ToString("o") },
-                        { "FileId", FileId.ToString() },
-                        { "SrcExt", Path.GetExtension(originalName).ToLowerInvariant() }
-                    };
-                    try { await _storage.SetTagsAsync(cacheBlobName, tags); } catch { /* ignore */ }
+                    var sas = await _storage.GenerateBlobReadSasAsync(cacheBlobName, TimeSpan.FromMinutes(3));
+                    PdfSourceUrl = AppendQuery(sas, $"fid={FileId}");
                 }
                 catch
                 {
-                    return StatusCode(500, "Conversion failed.");
+                    cacheValid = false;
                 }
             }
 
-            try
+            if (!cacheValid)
             {
-                var sas = await _storage.GenerateBlobReadSasAsync(cacheBlobName, TimeSpan.FromMinutes(3));
-                PdfSourceUrl = AppendQuery(sas, $"fid={FileId}");
-            }
-            catch
-            {
-                return StatusCode(500, "Failed to generate SAS for cached PDF.");
+                // No cached conversion available — show download fallback
+                ShowDownloadFallback = true;
             }
 
             var userEmail = (await _userManager.FindByIdAsync(userId))?.Email;
+
+            WatermarkText = _docOptions.ResolveWatermark(
+                userId, userEmail, tenantId.ToString(),
+                HttpContext.Connection.RemoteIpAddress?.ToString());
 
             await _auditLogger.LogAsync(new AuditEntry(
                 tenantId,
@@ -144,7 +124,7 @@ namespace twoSaaSCore.Pages.Files
                 userEmail,
                 FileName,
                 metadata.Size,
-                null,//metadata.HashSha256, // if you store it; else null
+                null,
                 Path.GetExtension(FileName)?.ToLowerInvariant(),
                 HttpContext.Connection.RemoteIpAddress?.ToString(),
                 Request.Headers.UserAgent.ToString().Truncate(256),
@@ -156,57 +136,6 @@ namespace twoSaaSCore.Pages.Files
 
         public Task<IActionResult> OnGetContentAsync() =>
             Task.FromResult<IActionResult>(NotFound());
-
-        private static MemoryStream PrepareBufferedStream(Stream source, long sizeHint)
-        {
-            MemoryStream mem;
-            if (sizeHint > 0 && sizeHint <= int.MaxValue)
-                mem = new MemoryStream((int)sizeHint);
-            else
-                mem = new MemoryStream();
-
-            source.CopyTo(mem);
-            mem.Position = 0;
-            return mem;
-        }
-
-        // Then, fully qualify the ExcelEngine usage in ConvertToPdfAsync:
-        private static async Task<MemoryStream> ConvertToPdfAsync(Stream officeStream, string originalName)
-        {
-            var ext = Path.GetExtension(originalName).ToLowerInvariant();
-            if (ext == ".docx")
-            {
-                using var wordDoc = new WordDocument(officeStream, FormatType.Automatic);
-                using var renderer = new DocIORenderer();
-                using var pdfDoc = renderer.ConvertToPDF(wordDoc);
-                var ms = new MemoryStream();
-                pdfDoc.Save(ms);
-                await ms.FlushAsync();
-                ms.Position = 0;
-                return ms;
-            }
-            if (ext == ".xlsx")
-            {
-                // Explicitly specify the namespace to resolve ambiguity
-                using var excelEngine = new Syncfusion.XlsIO.ExcelEngine();
-                var app = excelEngine.Excel;
-                app.DefaultVersion = ExcelVersion.Xlsx;
-                officeStream.Position = 0;
-                var workbook = app.Workbooks.Open(officeStream);
-
-                //Initialize XlsIO renderer.
-                XlsIORenderer renderer = new XlsIORenderer();
-                
-                PdfDocument pdfDoc = renderer.ConvertToPDF(workbook,new XlsIORendererSettings { LayoutOptions = LayoutOptions.FitSheetOnOnePage});
-
-                var ms = new MemoryStream();
-                pdfDoc.Save(ms);
-                await ms.FlushAsync();
-                ms.Position = 0;
-                return ms;
-            }
-            throw new NotSupportedException("Extension not supported for conversion.");
-        }
 
         private static string BuildCacheBlobName(string originalBlobName, Guid fileId)
             => $"cache/{fileId}.pdf";
@@ -220,24 +149,11 @@ namespace twoSaaSCore.Pages.Files
             return ext == ".pdf" || (contentType?.Equals("application/pdf", StringComparison.OrdinalIgnoreCase) == true);
         }
 
-        private static bool IsDocx(string name, string? contentType)
+        private static bool IsOfficeFormat(string name, string? contentType)
         {
             var ext = Path.GetExtension(name).ToLowerInvariant();
-            return ext == ".docx" || (contentType?.Equals(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                StringComparison.OrdinalIgnoreCase) == true);
+            return ext is ".docx" or ".doc" or ".xlsx" or ".xls";
         }
-
-        private static bool IsXlsx(string name, string? contentType)
-        {
-            var ext = Path.GetExtension(name).ToLowerInvariant();
-            return ext == ".xlsx" || (contentType?.Equals(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                StringComparison.OrdinalIgnoreCase) == true);
-        }
-
-        private static bool IsConvertibleToPdf(string name, string? contentType)
-            => IsDocx(name, contentType) || IsXlsx(name, contentType);
     }
 
     public static class StringExtensions

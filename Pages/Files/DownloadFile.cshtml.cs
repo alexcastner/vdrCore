@@ -8,10 +8,10 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Syncfusion.Drawing;
-using Syncfusion.Pdf;
-using Syncfusion.Pdf.Graphics;
-using Syncfusion.Pdf.Parsing;
+using Microsoft.Extensions.Options;
+using PdfSharpCore.Drawing;
+using PdfSharpCore.Pdf;
+using PdfSharpCore.Pdf.IO;
 using twoSaaSCore.Models;
 using twoSaaSCore.Services;
 
@@ -25,18 +25,21 @@ namespace twoSaaSCore.Pages.Files
         private readonly IRoomPermissionService _permissions;
         private readonly IAuditLogger _auditLogger;
         private readonly UserManager<ApplicationUser> _userManager;
+        private readonly DocumentConversionOptions _docOptions;
 
         public DownloadFileModel(ITenantProvider tenantProvider,
                                  IRoomFileCatalog catalog,
                                  IRoomPermissionService permissions,
                                  IAuditLogger auditLogger,
-                                 UserManager<ApplicationUser> userManager)
+                                 UserManager<ApplicationUser> userManager,
+                                 IOptions<DocumentConversionOptions> docOptions)
         {
             _tenantProvider = tenantProvider;
             _catalog = catalog;
             _permissions = permissions;
             _auditLogger = auditLogger;
             _userManager = userManager;
+            _docOptions = docOptions.Value;
         }
 
         // Single file watermarked download
@@ -78,7 +81,8 @@ namespace twoSaaSCore.Pages.Files
                 await sourceStream.CopyToAsync(ms);
                 ms.Position = 0;
 
-                var watermarked = ApplyPdfWatermark(ms, email, ip);
+                var resolvedWatermark = _docOptions.ResolveWatermark(userId, email, tenantId.ToString(), ip);
+                var watermarked = ApplyPdfWatermark(ms, resolvedWatermark);
                 return File(watermarked, "application/pdf", metadata.OriginalFileName);
             }
 
@@ -133,7 +137,8 @@ namespace twoSaaSCore.Pages.Files
                         var ms = new MemoryStream();
                         await fileStream.CopyToAsync(ms);
                         ms.Position = 0;
-                        var watermarked = ApplyPdfWatermark(ms, email, ip);
+                        var resolvedWatermark = _docOptions.ResolveWatermark(userId, email, tenantId.ToString(), ip);
+                        var watermarked = ApplyPdfWatermark(ms, resolvedWatermark);
 
                         var entry = archive.CreateEntry(name, CompressionLevel.Fastest);
                         await using var entryStream = entry.Open();
@@ -161,37 +166,49 @@ namespace twoSaaSCore.Pages.Files
             return File(zipStream, "application/zip", $"room-download-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip");
         }
 
-        private static MemoryStream ApplyPdfWatermark(Stream pdfStream, string userEmail, string ipAddress)
+        private static MemoryStream ApplyPdfWatermark(Stream pdfStream, string watermarkText)
         {
-            using var doc = new PdfLoadedDocument(pdfStream);
-            var watermarkText = $"{userEmail}  |  {ipAddress}  |  {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC";
-            var font = new PdfStandardFont(PdfFontFamily.Helvetica, 9f);
-            var brush = new PdfSolidBrush(new PdfColor(180, 180, 180));
+            using var doc = PdfReader.Open(pdfStream, PdfDocumentOpenMode.Modify);
+            var footerFont = new XFont("Helvetica", 9);
 
-            foreach (PdfPageBase page in doc.Pages)
+            foreach (var page in doc.Pages)
             {
-                var gfx = page.Graphics;
+                using var gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Append);
+                var pageWidth = page.Width.Point;
+                var pageHeight = page.Height.Point;
+
+                // Diagonal watermark — auto-scale font to fit within 80% of the page diagonal
+                var diagonal = Math.Sqrt(pageWidth * pageWidth + pageHeight * pageHeight);
+                var maxTextWidth = diagonal * 0.80;
+
+                var fontSize = 40.0;
+                var diagonalFont = new XFont("Helvetica", fontSize);
+                var textSize = gfx.MeasureString(watermarkText, diagonalFont);
+
+                if (textSize.Width > maxTextWidth)
+                {
+                    fontSize = fontSize * maxTextWidth / textSize.Width;
+                    fontSize = Math.Max(fontSize, 8); // floor at 8pt for readability
+                    diagonalFont = new XFont("Helvetica", fontSize);
+                    textSize = gfx.MeasureString(watermarkText, diagonalFont);
+                }
+
+                var confBrush = new XSolidBrush(XColor.FromArgb(38, 180, 180, 180)); // ~15% opacity
                 var state = gfx.Save();
-
-                // Diagonal center watermark
-                gfx.SetTransparency(0.15f);
-                var largeFont = new PdfStandardFont(PdfFontFamily.Helvetica, 40f);
-                var size = largeFont.MeasureString("CONFIDENTIAL");
-                gfx.TranslateTransform(page.Size.Width / 2, page.Size.Height / 2);
+                gfx.TranslateTransform(pageWidth / 2, pageHeight / 2);
                 gfx.RotateTransform(-45);
-                gfx.DrawString("CONFIDENTIAL", largeFont, brush, new PointF(-size.Width / 2, -size.Height / 2));
-
+                gfx.DrawString(watermarkText, diagonalFont, confBrush,
+                    new XPoint(-textSize.Width / 2, textSize.Height / 2));
                 gfx.Restore(state);
 
-                // Footer bar with user info
-                gfx.SetTransparency(0.4f);
-                var textSize = font.MeasureString(watermarkText);
-                gfx.DrawString(watermarkText, font, brush,
-                    new PointF(5, page.Size.Height - textSize.Height - 5));
+                // Footer bar with same text (~40% opacity)
+                var footerBrush = new XSolidBrush(XColor.FromArgb(102, 180, 180, 180));
+                gfx.DrawString(watermarkText, footerFont, footerBrush,
+                    new XPoint(5, pageHeight - 5));
             }
 
             var output = new MemoryStream();
-            doc.Save(output);
+            doc.Save(output, false);
             output.Position = 0;
             return output;
         }

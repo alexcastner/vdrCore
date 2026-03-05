@@ -6,16 +6,8 @@ using twoSaaSCore.Models;
 using twoSaaSCore.Services;
 using twoSaaSCore.Middleware;
 using twoSaaSCore.Filters;
-using Syncfusion.Licensing; // add
 
 var builder = WebApplication.CreateBuilder(args);
-
-// Register Syncfusion license (configure in appsettings or user-secrets: "Syncfusion:LicenseKey")
-var sfLicense = builder.Configuration["Syncfusion:LicenseKey"];
-if (!string.IsNullOrWhiteSpace(sfLicense))
-{
-    SyncfusionLicenseProvider.RegisterLicense(sfLicense);
-}
 
 
 // Add services to the container.
@@ -32,6 +24,7 @@ builder.Services.AddSingleton<IFileStorage, AzureBlobFileStorage>();
 
 builder.Services.Configure<AzureBlobOptions>(builder.Configuration.GetSection("AzureBlob"));
 builder.Services.AddScoped<IRoomFileCatalog, BlobRoomFileCatalog>();
+builder.Services.Configure<DocumentConversionOptions>(builder.Configuration.GetSection("DocumentConversion"));
 builder.Services.AddDefaultIdentity<ApplicationUser>(options =>
     {
         options.SignIn.RequireConfirmedAccount = true;

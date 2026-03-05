@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Options;
 using twoSaaSCore.Models;
 using twoSaaSCore.Services;
 
@@ -19,14 +20,16 @@ namespace twoSaaSCore.Pages.Files
         private readonly IRoomPermissionService _permissions;
         private readonly IAuditLogger _auditLogger;
         private readonly UserManager<ApplicationUser> _userManager;
+        private readonly DocumentConversionOptions _docOptions;
 
-        public ViewPdfModel(ITenantProvider tenantProvider, IRoomFileCatalog catalog, IRoomPermissionService permissions, IAuditLogger auditLogger, UserManager<ApplicationUser> userManager)
+        public ViewPdfModel(ITenantProvider tenantProvider, IRoomFileCatalog catalog, IRoomPermissionService permissions, IAuditLogger auditLogger, UserManager<ApplicationUser> userManager, IOptions<DocumentConversionOptions> docOptions)
         {
             _tenantProvider = tenantProvider;
             _catalog = catalog;
             _permissions = permissions;
             _auditLogger = auditLogger;
             _userManager = userManager;
+            _docOptions = docOptions.Value;
         }
 
         [BindProperty(SupportsGet = true)]
@@ -37,6 +40,7 @@ namespace twoSaaSCore.Pages.Files
 
         public string FileName { get; private set; } = string.Empty;
         public string PdfSourceUrl { get; private set; } = string.Empty;
+        public string WatermarkText { get; private set; } = string.Empty;
 
         public async Task<IActionResult> OnGetAsync()
         {
@@ -67,6 +71,10 @@ namespace twoSaaSCore.Pages.Files
             }
 
             var userEmail = (await _userManager.FindByIdAsync(userId))?.Email;
+
+            WatermarkText = _docOptions.ResolveWatermark(
+                userId, userEmail, tenantId.ToString(),
+                HttpContext.Connection.RemoteIpAddress?.ToString());
 
             await _auditLogger.LogAsync(new AuditEntry(
                 tenantId, RoomId, FileId, "View", userId, userEmail,
