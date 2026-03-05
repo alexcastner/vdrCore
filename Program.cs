@@ -41,6 +41,10 @@ builder.Services.AddDefaultIdentity<ApplicationUser>(options =>
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddDefaultTokenProviders(); // Adds Authenticator + Email + Phone token providers
 
+// Add this registration
+builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, TenantClaimsPrincipalFactory>();
+
+
 // Register the MFA enforcement filter in DI
 builder.Services.AddScoped<RequireAnyMfaFilter>();
 
@@ -73,20 +77,27 @@ else
 
 builder.Services.AddRazorPages(options =>
 {
-//    // OPTION 1 (simplest): apply to every Razor Page
-//    options.Filters.Add<RequireAnyMfaFilter>();
-
-// OPTION 2 (more selective): apply only to pages under root folder (comment OPTION 1 if using)
-    // options.Conventions.AddFolderApplicationModelConvention("/", model =>
-    // {
-    //     model.Filters.Add(new ServiceFilterAttribute(typeof(RequireAnyMfaFilter)));
-    // });
-
-    // OPTION 3 (all pages via convention): uncomment if you prefer a single line
-    // options.Conventions.ConfigureFilter(new ServiceFilterAttribute(typeof(RequireAnyMfaFilter)));
 });
 
 var app = builder.Build();
+
+// Ensure database exists and all migrations are applied at startup.
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("StartupMigration");
+
+    try
+    {
+        var db = services.GetRequiredService<ApplicationDbContext>();
+        db.Database.Migrate();
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "An error occurred while applying database migrations at startup.");
+        throw;
+    }
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -96,7 +107,6 @@ if (app.Environment.IsDevelopment())
 else
 {
     app.UseExceptionHandler("/Error");
-    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
     app.UseHsts();
 }
 
