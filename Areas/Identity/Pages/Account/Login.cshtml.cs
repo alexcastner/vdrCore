@@ -52,13 +52,20 @@ namespace twoSaaSCore.Areas.Identity.Pages.Account
         public async Task<IActionResult> OnPostAsync(string? returnUrl = null)
         {
             returnUrl ??= Url.Page("/Files/Index") ?? "/Files/Index";
+            bool isAjax = Request.Headers["X-Requested-With"] == "XMLHttpRequest";
 
             if (!ModelState.IsValid)
+            {
+                if (isAjax)
+                    return new JsonResult(new { succeeded = false, error = "Please provide a valid email and password." });
                 return Page();
+            }
 
             var user = await _userManager.Users.FirstOrDefaultAsync(u => u.Email == Input.Email);
             if (user == null)
             {
+                if (isAjax)
+                    return new JsonResult(new { succeeded = false, error = "Invalid login attempt." });
                 ModelState.AddModelError(string.Empty, "Invalid login attempt.");
                 return Page();
             }
@@ -68,7 +75,8 @@ namespace twoSaaSCore.Areas.Identity.Pages.Account
 
             if (result.RequiresTwoFactor)
             {
-                // Redirect to authenticator (primary). SMS fallback page will link from there.
+                if (isAjax)
+                    return new JsonResult(new { succeeded = false, requiresTwoFactor = true, redirectUrl = Url.Page("./LoginWith2fa", new { ReturnUrl = returnUrl, RememberMe = Input.RememberMe }) });
                 return RedirectToPage("./LoginWith2fa", new { ReturnUrl = returnUrl, RememberMe = Input.RememberMe });
             }
 
@@ -79,17 +87,25 @@ namespace twoSaaSCore.Areas.Identity.Pages.Account
                 if (!claims.Any(c => c.Type == TenantConstants.TenantIdClaimType))
                 {
                     await _userManager.AddClaimAsync(user, new Claim(TenantConstants.TenantIdClaimType, user.TenantId.ToString()));
+                    // Re-sign-in so the new claim is included in the current cookie
+                    await _signInManager.RefreshSignInAsync(user);
                 }
 
+                if (isAjax)
+                    return new JsonResult(new { succeeded = true, redirectUrl = returnUrl });
                 return LocalRedirect(returnUrl);
             }
 
             if (result.IsLockedOut)
             {
+                if (isAjax)
+                    return new JsonResult(new { succeeded = false, error = "Account locked. Try again later." });
                 ModelState.AddModelError(string.Empty, "Account locked. Try again later.");
                 return Page();
             }
 
+            if (isAjax)
+                return new JsonResult(new { succeeded = false, error = "Invalid login attempt." });
             ModelState.AddModelError(string.Empty, "Invalid login attempt.");
             return Page();
         }

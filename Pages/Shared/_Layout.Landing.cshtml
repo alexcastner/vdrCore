@@ -1,3 +1,4 @@
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Antiforgery
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,9 +12,119 @@
 <body class="vr-landing">
     @RenderBody()
 
+    @if (User?.Identity?.IsAuthenticated != true)
+    {
+        <!-- Login Modal -->
+        <div class="vr-modal-backdrop" id="loginBackdrop" onclick="closeLoginModal()"></div>
+        <div class="vr-login-modal" id="loginModal" role="dialog" aria-labelledby="loginModalTitle" aria-modal="true">
+            <button class="vr-modal-close" onclick="closeLoginModal()" aria-label="Close">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <div class="vr-modal-brand">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--vr-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+            </div>
+            <h2 id="loginModalTitle" class="vr-modal-title">Sign in to VaultRoom</h2>
+            <div id="loginError" class="vr-modal-error" style="display:none;"></div>
+            <form id="loginForm" novalidate>
+                @Html.Raw($"<input name=\"__RequestVerificationToken\" type=\"hidden\" value=\"{Antiforgery.GetAndStoreTokens(Context).RequestToken}\" />")
+                <div class="vr-modal-field">
+                    <label for="loginEmail">Email</label>
+                    <input type="email" id="loginEmail" name="Input.Email" class="form-control" autocomplete="email" required />
+                </div>
+                <div class="vr-modal-field">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" name="Input.Password" class="form-control" autocomplete="current-password" required />
+                </div>
+                <div class="vr-modal-field vr-modal-remember">
+                    <label>
+                        <input type="checkbox" name="Input.RememberMe" value="true" /> Remember me
+                    </label>
+                </div>
+                <button type="submit" class="btn-landing-primary vr-modal-submit" id="loginSubmitBtn">
+                    Sign in
+                </button>
+            </form>
+            <div class="vr-modal-footer">
+                Don't have an account? <a asp-area="Identity" asp-page="/Account/Register">Create one</a>
+            </div>
+        </div>
+    }
+
     <script src="~/lib/jquery/dist/jquery.min.js"></script>
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
+
+    @if (User?.Identity?.IsAuthenticated != true)
+    {
+        <script>
+            function openLoginModal() {
+                document.getElementById('loginBackdrop').classList.add('show');
+                document.getElementById('loginModal').classList.add('show');
+                document.body.style.overflow = 'hidden';
+                document.getElementById('loginEmail').focus();
+            }
+
+            function closeLoginModal() {
+                document.getElementById('loginBackdrop').classList.remove('show');
+                document.getElementById('loginModal').classList.remove('show');
+                document.body.style.overflow = '';
+                document.getElementById('loginError').style.display = 'none';
+            }
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') closeLoginModal();
+            });
+
+            document.getElementById('loginForm').addEventListener('submit', async function (e) {
+                e.preventDefault();
+                var errorEl = document.getElementById('loginError');
+                var btn = document.getElementById('loginSubmitBtn');
+                errorEl.style.display = 'none';
+
+                var email = document.getElementById('loginEmail').value.trim();
+                var password = document.getElementById('loginPassword').value;
+                if (!email || !password) {
+                    errorEl.textContent = 'Please enter your email and password.';
+                    errorEl.style.display = 'block';
+                    return;
+                }
+
+                btn.disabled = true;
+                btn.textContent = 'Signing in…';
+
+                try {
+                    var formData = new FormData(this);
+                    var resp = await fetch('/Identity/Account/Login', {
+                        method: 'POST',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        body: formData
+                    });
+
+                    if (resp.ok) {
+                        var data = await resp.json();
+                        if (data.succeeded) {
+                            window.location.href = data.redirectUrl || '/Files/Index';
+                        } else if (data.requiresTwoFactor) {
+                            window.location.href = data.redirectUrl || '/Identity/Account/LoginWith2fa';
+                        } else {
+                            errorEl.textContent = data.error || 'Invalid login attempt.';
+                            errorEl.style.display = 'block';
+                        }
+                    } else {
+                        errorEl.textContent = 'Something went wrong. Please try again.';
+                        errorEl.style.display = 'block';
+                    }
+                } catch {
+                    errorEl.textContent = 'Unable to connect. Please check your connection.';
+                    errorEl.style.display = 'block';
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = 'Sign in';
+                }
+            });
+        </script>
+    }
+
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

@@ -1780,3 +1780,131 @@ details[open] > .vr-large-upload-toggle svg {
     color: #DC2626;
     white-space: nowrap;
 }
+
+/* ---- Login Modal ---- */
+.vr-modal-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.4);
+  backdrop-filter: blur(4px);
+  z-index: 2000;
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+.vr-modal-backdrop.show {
+  display: block;
+  opacity: 1;
+}
+.vr-login-modal {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(.96);
+  background: #fff;
+  border-radius: var(--vr-radius-lg);
+  box-shadow: var(--vr-shadow-lg);
+  padding: 2.5rem 2rem 2rem;
+  width: 100%;
+  max-width: 400px;
+  z-index: 2001;
+  opacity: 0;
+  transition: opacity 250ms ease, transform 250ms ease;
+}
+.vr-login-modal.show {
+  display: block;
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.vr-modal-close {
+  position: absolute;
+  top: .75rem;
+  right: .75rem;
+  background: none;
+  border: none;
+  color: var(--vr-text-muted);
+  cursor: pointer;
+  padding: .25rem;
+  border-radius: var(--vr-radius-sm);
+  transition: color var(--vr-transition), background var(--vr-transition);
+}
+.vr-modal-close:hover {
+  color: var(--vr-text);
+  background: var(--vr-surface);
+}
+.vr-modal-brand {
+  text-align: center;
+  margin-bottom: .75rem;
+}
+.vr-modal-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--vr-text);
+  text-align: center;
+  margin: 0 0 1.5rem;
+  letter-spacing: -.02em;
+}
+.vr-modal-error {
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: #DC2626;
+  border-radius: var(--vr-radius-sm);
+  padding: .5rem .75rem;
+  font-size: .85rem;
+  margin-bottom: 1rem;
+}
+.vr-modal-field {
+  margin-bottom: 1rem;
+}
+.vr-modal-field label {
+  display: block;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--vr-text);
+  margin-bottom: .3rem;
+}
+.vr-modal-remember {
+  margin-bottom: 1.25rem;
+}
+.vr-modal-remember label {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .8rem;
+  font-weight: 400;
+  color: var(--vr-text-muted);
+  cursor: pointer;
+}
+.vr-modal-submit {
+  width: 100%;
+  text-align: center;
+  padding: .65rem;
+  font-size: .95rem;
+  cursor: pointer;
+}
+.vr-modal-submit:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+.vr-modal-footer {
+  text-align: center;
+  margin-top: 1.25rem;
+  font-size: .85rem;
+  color: var(--vr-text-muted);
+}
+.vr-modal-footer a {
+  color: var(--vr-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+.vr-modal-footer a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 480px) {
+  .vr-login-modal {
+    max-width: calc(100% - 2rem);
+    padding: 2rem 1.25rem 1.5rem;
+  }
+}
