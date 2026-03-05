@@ -91,6 +91,41 @@ using (var scope = app.Services.CreateScope())
     {
         var db = services.GetRequiredService<ApplicationDbContext>();
         db.Database.Migrate();
+
+        // DocumentAuditLog is a raw-SQL table (not managed by EF migrations).
+        // Ensure it exists with the full schema on every startup.
+        var auditDdl = @"
+IF OBJECT_ID(N'dbo.DocumentAuditLog', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.DocumentAuditLog
+    (
+        AuditLogId   BIGINT         IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        ActionUtc    DATETIME2(7)   NOT NULL DEFAULT SYSUTCDATETIME(),
+        TenantId     UNIQUEIDENTIFIER NOT NULL,
+        RoomId       UNIQUEIDENTIFIER NULL,
+        FileId       UNIQUEIDENTIFIER NULL,
+        UserId       NVARCHAR(450)  NULL,
+        UserEmail    NVARCHAR(256)  NULL,
+        Action       NVARCHAR(100)  NOT NULL,
+        FileName     NVARCHAR(500)  NULL,
+        FileSize     BIGINT         NULL,
+        FileSha256   NVARCHAR(128)  NULL,
+        IpAddress    NVARCHAR(45)   NULL,
+        UserAgent    NVARCHAR(500)  NULL,
+        CorrelationId UNIQUEIDENTIFIER NOT NULL,
+        ExtraJson    NVARCHAR(MAX)  NULL,
+        SrcExt       NVARCHAR(20)   NULL
+    );
+    CREATE NONCLUSTERED INDEX IX_DocumentAuditLog_Tenant_Room
+        ON dbo.DocumentAuditLog (TenantId, RoomId, ActionUtc DESC);
+END
+
+IF COL_LENGTH(N'dbo.DocumentAuditLog', N'UserEmail') IS NULL
+BEGIN
+    ALTER TABLE dbo.DocumentAuditLog ADD UserEmail NVARCHAR(256) NULL;
+END";
+
+        db.Database.ExecuteSqlRaw(auditDdl);
     }
     catch (Exception ex)
     {

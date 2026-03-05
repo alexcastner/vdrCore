@@ -157,6 +157,12 @@ namespace twoSaaSCore.Areas.Identity.Pages.Account
                 {
                     _logger.LogInformation("User created a new account with password.");
 
+                    // Persist the tenant claim so it appears in the auth cookie
+                    await _userManager.AddClaimAsync(user,
+                        new System.Security.Claims.Claim(
+                            twoSaaSCore.Constants.TenantConstants.TenantIdClaimType,
+                            user.TenantId.ToString()));
+
                     var userId = await _userManager.GetUserIdAsync(user);
                     var code = await _userManager.GenerateEmailConfirmationTokenAsync(user);
                     code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
