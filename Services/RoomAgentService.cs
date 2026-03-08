@@ -15,6 +15,7 @@ using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
 using OpenAI.Assistants;
 using OpenAI.Files;
 using OpenAI.VectorStores;
+using Syncfusion.XlsIO;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -38,6 +39,15 @@ namespace twoSaaSCore.Services
 
         private const int MaxLinkedPdfs = 20;
         private const long MaxPdfDownloadBytes = 50L * 1024 * 1024; // 50 MB
+
+        /// <summary>Extensions accepted by the Azure OpenAI Files API for file_search.</summary>
+        private static readonly HashSet<string> SupportedFileExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".c", ".cpp", ".css", ".csv", ".doc", ".docx", ".gif", ".go", ".html",
+            ".java", ".jpeg", ".jpg", ".js", ".json", ".md", ".pdf", ".php", ".pkl",
+            ".png", ".pptx", ".py", ".rb", ".tar", ".tex", ".ts", ".txt", ".webp",
+            ".xml", ".zip"
+        };
 
         private readonly AzureAiOptions _aiOptions;
         private readonly AzureBlobOptions _blobOptions;
@@ -263,17 +273,49 @@ namespace twoSaaSCore.Services
                 await stream.CopyToAsync(contentBuffer, ct);
                 var fileBytes = contentBuffer.ToArray();
 
-                // Upload original to Azure OpenAI Files
-                using var uploadStream = new MemoryStream(fileBytes, writable: false);
-                var uploaded = await _fileClient!.UploadFileAsync(
-                    uploadStream, fileName, FileUploadPurpose.Assistants, ct);
+                var safeFileName = SanitizeUploadFileName(fileName);
+                var ext = Path.GetExtension(safeFileName);
+                string? vectorStoreFileId;
 
-                _logger.LogInformation("Uploaded file {FileName} ({FileId}) as OpenAI file {OpenAiFileId}",
-                    fileName, fileId, uploaded.Value.Id);
+                if (SupportedFileExtensions.Contains(ext))
+                {
+                    // Try uploading the original file with a sanitized name.
+                    vectorStoreFileId = await TryUploadOriginalFileAsync(
+                        fileBytes, safeFileName, fileName, fileId, vectorStoreId, ct);
 
-                // Add to vector store
-                var vectorStoreFile = await _vectorStoreClient!.AddFileToVectorStoreAsync(
-                    vectorStoreId, uploaded.Value.Id, ct);
+                    // If the API still rejects it, fall back to text extraction.
+                    if (vectorStoreFileId == null)
+                    {
+                        vectorStoreFileId = await TryUploadAsTextFallbackAsync(
+                            fileBytes, fileName, fileId, vectorStoreId, ct);
+                    }
+                }
+                else
+                {
+                    // Extension not supported — extract text and upload as .txt.
+                    _logger.LogInformation(
+                        "File {FileName} ({FileId}) has unsupported extension {Extension}; attempting text extraction.",
+                        fileName, fileId, ext);
+
+                    vectorStoreFileId = await TryUploadAsTextFallbackAsync(
+                        fileBytes, fileName, fileId, vectorStoreId, ct);
+                }
+
+                if (vectorStoreFileId == null)
+                {
+                    _logger.LogWarning(
+                        "Could not index file {FileName} ({FileId}) — unsupported format with no extractable text.",
+                        fileName, fileId);
+
+                    var skippedRef = await RoomFileRefsQuery()
+                        .FirstOrDefaultAsync(r => r.TenantId == tenantId && r.RoomId == roomId && r.FileId == fileId, ct);
+                    if (skippedRef != null)
+                    {
+                        skippedRef.VectorStoreFileId = $"{FailedVectorStoreFileIdPrefix}{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+                        await _db.SaveChangesAsync(ct);
+                    }
+                    return;
+                }
 
                 // OCR fallback for scanned PDFs: upload extracted text as an additional indexed file.
                 if (fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
@@ -281,7 +323,8 @@ namespace twoSaaSCore.Services
                     var ocrText = await TryExtractPdfTextWithOcrAsync(fileBytes, ct);
                     if (!string.IsNullOrWhiteSpace(ocrText))
                     {
-                        var ocrFileName = $"{Path.GetFileNameWithoutExtension(fileName)}.ocr.txt";
+                        var ocrFileName = SanitizeUploadFileName(
+                            $"{Path.GetFileNameWithoutExtension(fileName)}.ocr.txt");
                         using var ocrStream = new MemoryStream(Encoding.UTF8.GetBytes(ocrText));
                         var ocrUploaded = await _fileClient!.UploadFileAsync(
                             ocrStream, ocrFileName, FileUploadPurpose.Assistants, ct);
@@ -296,7 +339,7 @@ namespace twoSaaSCore.Services
                     .FirstOrDefaultAsync(r => r.TenantId == tenantId && r.RoomId == roomId && r.FileId == fileId, ct);
                 if (fileRef != null)
                 {
-                    fileRef.VectorStoreFileId = vectorStoreFile.Value.FileId;
+                    fileRef.VectorStoreFileId = vectorStoreFileId;
                     await _db.SaveChangesAsync(ct);
                 }
             }
@@ -312,6 +355,173 @@ namespace twoSaaSCore.Services
 
                 _logger.LogWarning(ex, "Failed to upload file {FileId} to vector store for room {RoomId}. AI search may be incomplete.",
                     fileId, roomId);
+            }
+        }
+
+        /// <summary>Attempts to upload the original file bytes with a sanitized name.</summary>
+        private async Task<string?> TryUploadOriginalFileAsync(
+            byte[] fileBytes, string safeFileName, string originalFileName, Guid fileId,
+            string vectorStoreId, CancellationToken ct)
+        {
+            try
+            {
+                using var uploadStream = new MemoryStream(fileBytes, writable: false);
+                var uploaded = await _fileClient!.UploadFileAsync(
+                    uploadStream, safeFileName, FileUploadPurpose.Assistants, ct);
+
+                _logger.LogInformation("Uploaded file {FileName} ({FileId}) as OpenAI file {OpenAiFileId}",
+                    originalFileName, fileId, uploaded.Value.Id);
+
+                var vectorStoreFile = await _vectorStoreClient!.AddFileToVectorStoreAsync(
+                    vectorStoreId, uploaded.Value.Id, ct);
+
+                return vectorStoreFile.Value.FileId;
+            }
+            catch (Exception ex) when (
+                ex.Message.Contains("Invalid extension", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("unsupported_file", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Azure OpenAI rejected file {FileName} ({FileId}) with sanitized name '{SafeName}': {Error}. Falling back to text extraction.",
+                    originalFileName, fileId, safeFileName, ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>Extracts text content from the file and uploads it as a .txt companion.</summary>
+        private async Task<string?> TryUploadAsTextFallbackAsync(
+            byte[] fileBytes, string originalFileName, Guid fileId,
+            string vectorStoreId, CancellationToken ct)
+        {
+            var text = TryExtractTextContent(fileBytes, originalFileName);
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            var txtFileName = SanitizeUploadFileName(
+                $"{Path.GetFileNameWithoutExtension(originalFileName)}.txt");
+
+            using var txtStream = new MemoryStream(Encoding.UTF8.GetBytes(text));
+            var uploaded = await _fileClient!.UploadFileAsync(
+                txtStream, txtFileName, FileUploadPurpose.Assistants, ct);
+
+            var vsFile = await _vectorStoreClient!.AddFileToVectorStoreAsync(
+                vectorStoreId, uploaded.Value.Id, ct);
+
+            _logger.LogInformation(
+                "Indexed file {FileName} ({FileId}) via text extraction as {TxtFileName}.",
+                originalFileName, fileId, txtFileName);
+
+            return vsFile.Value.FileId;
+        }
+
+        /// <summary>Sanitizes a filename for use with the Azure OpenAI Files API upload.</summary>
+        private static string SanitizeUploadFileName(string fileName)
+        {
+            var name = Path.GetFileName(fileName);
+            if (string.IsNullOrWhiteSpace(name))
+                name = fileName;
+
+            var sb = new StringBuilder(name.Length);
+            foreach (var c in name)
+            {
+                if (c > 127 || char.IsWhiteSpace(c) || c == '#' || c == '?' || c == '&' || c == '%' )
+                    sb.Append('_');
+                else if (Path.GetInvalidFileNameChars().Contains(c))
+                    sb.Append('_');
+                else
+                    sb.Append(c);
+            }
+
+            var sanitized = sb.ToString();
+            sanitized = Regex.Replace(sanitized, @"_{2,}", "_");
+            sanitized = sanitized.Trim('_', '.');
+
+            if (sanitized.Length > 100)
+                sanitized = sanitized[..100];
+
+            if (!Path.HasExtension(sanitized))
+            {
+                var originalExt = Path.GetExtension(fileName);
+                sanitized += string.IsNullOrEmpty(originalExt) ? ".txt" : originalExt;
+            }
+
+            if (string.IsNullOrWhiteSpace(Path.GetFileNameWithoutExtension(sanitized)))
+                sanitized = $"file_{Guid.NewGuid():N}{Path.GetExtension(sanitized)}";
+
+            return sanitized;
+        }
+
+        /// <summary>Extracts text from a file for indexing when the original format is unsupported or rejected.</summary>
+        private static string? TryExtractTextContent(byte[] fileBytes, string fileName)
+        {
+            var ext = Path.GetExtension(fileName);
+
+            if (ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".xls", StringComparison.OrdinalIgnoreCase))
+            {
+                return TryExtractXlsxText(fileBytes);
+            }
+
+            if (ext.Equals(".csv", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".tsv", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".log", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".txt", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".md", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".xml", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".json", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".html", StringComparison.OrdinalIgnoreCase) ||
+                ext.Equals(".htm", StringComparison.OrdinalIgnoreCase))
+            {
+                var text = Encoding.UTF8.GetString(fileBytes);
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+
+            return null;
+        }
+
+        /// <summary>Extracts cell text from an Excel workbook using Syncfusion XlsIO.</summary>
+        private static string? TryExtractXlsxText(byte[] fileBytes)
+        {
+            try
+            {
+                using var engine = new ExcelEngine();
+                var application = engine.Excel;
+                application.DefaultVersion = ExcelVersion.Xlsx;
+
+                using var stream = new MemoryStream(fileBytes, writable: false);
+                var workbook = application.Workbooks.Open(stream);
+
+                var sb = new StringBuilder();
+                foreach (IWorksheet ws in workbook.Worksheets)
+                {
+                    sb.AppendLine($"--- {ws.Name} ---");
+                    var range = ws.UsedRange;
+                    if (range == null) continue;
+
+                    for (var row = range.Row; row <= range.LastRow; row++)
+                    {
+                        var cells = new List<string>();
+                        for (var col = range.Column; col <= range.LastColumn; col++)
+                        {
+                            var cell = ws.Range[row, col];
+                            var text = cell.DisplayText;
+                            if (!string.IsNullOrEmpty(text))
+                                cells.Add(text);
+                        }
+
+                        if (cells.Count > 0)
+                            sb.AppendLine(string.Join('\t', cells));
+                    }
+
+                    sb.AppendLine();
+                }
+
+                var result = sb.ToString();
+                return string.IsNullOrWhiteSpace(result) ? null : result;
+            }
+            catch
+            {
+                return null;
             }
         }
 
