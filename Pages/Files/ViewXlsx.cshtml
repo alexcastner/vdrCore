@@ -1,0 +1,64 @@
+@page "/Files/ViewXlsx"
+@model twoSaaSCore.Pages.Files.ViewXlsxModel
+@{
+    ViewData["Title"] = "View Spreadsheet";
+}
+
+<div class="vr-viewer">
+    <div class="vr-viewer-header">
+        <div class="vr-viewer-title">
+            <span class="vr-badge-xlsx">xlsx</span>
+            <h1>@Model.FileName</h1>
+        </div>
+        <div class="vr-viewer-toolbar">
+            <a class="vr-toolbar-btn" href="javascript:window.close()" title="Close viewer">
+                <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </a>
+        </div>
+    </div>
+
+    <div class="vr-watermark">@Model.WatermarkText</div>
+
+    <script>
+        function onSpreadsheetCreated() {
+            var spreadsheet = this;
+
+            // Trigger the open action so the server returns the watermarked workbook
+            fetch('@Html.Raw(Model.OpenUrl)', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+                spreadsheet.openFromJson({ file: data });
+            })
+            .catch(function (err) {
+                console.error('Failed to load spreadsheet:', err);
+            });
+        }
+    </script>
+
+    <div id="xlsxViewerContainer" style="width:100%;height:calc(100vh - 120px);">
+        <ejs-spreadsheet id="spreadsheet"
+                         openUrl="@Model.OpenUrl"
+                         allowOpen="true"
+                         allowEditing="false"
+                         allowInsert="false"
+                         allowDelete="false"
+                         allowMerge="false"
+                         allowSorting="false"
+                         allowFiltering="false"
+                         allowHyperlink="false"
+                         allowFreezePane="true"
+                         allowResizing="true"
+                         allowScrolling="true"
+                         allowSave="false"
+                         showRibbon="false"
+                         showFormulaBar="false"
+                         showSheetTabs="true"
+                         enableContextMenu="false"
+                         height="100%"
+                         created="onSpreadsheetCreated">
+        </ejs-spreadsheet>
+    </div>
+</div>

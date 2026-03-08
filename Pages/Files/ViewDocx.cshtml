@@ -1,0 +1,48 @@
+@page "/Files/ViewDocx"
+@model twoSaaSCore.Pages.Files.ViewDocxModel
+@{
+    ViewData["Title"] = "View Document";
+}
+
+<div class="vr-viewer">
+    <div class="vr-viewer-header">
+        <div class="vr-viewer-title">
+            <span class="vr-badge-docx">docx</span>
+            <h1>@Model.FileName</h1>
+        </div>
+        <div class="vr-viewer-toolbar">
+            <a class="vr-toolbar-btn" href="javascript:window.close()" title="Close viewer">
+                <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </a>
+        </div>
+    </div>
+
+    <div class="vr-watermark">@Model.WatermarkText</div>
+
+    <div id="docxEditorContainer" style="width:100%;height:calc(100vh - 120px);">
+        <ejs-documenteditorcontainer id="documenteditor_container"
+                                     enableToolbar="false"
+                                     restrictEditing="true"
+                                     showPropertiesPane="false"
+                                     height="100%">
+        </ejs-documenteditorcontainer>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var containerInstance = document.getElementById('documenteditor_container').ej2_instances[0];
+            if (containerInstance && containerInstance.documentEditor) {
+                var editor = containerInstance.documentEditor;
+                editor.isReadOnly = true;
+                editor.enableContextMenu = false;
+
+                var sfdt = @Html.Raw(Model.SfdtContent);
+                editor.open(JSON.stringify(sfdt));
+
+                editor.isReadOnly = true;
+            }
+        });
+    </script>
+}

@@ -67,6 +67,12 @@ namespace twoSaaSCore.Pages.Files
             if (IsPdf(originalName, metadata.ContentType))
                 return RedirectToPage("/Files/ViewPdf", new { RoomId, FileId });
 
+            if (IsDocx(originalName))
+                return RedirectToPage("/Files/ViewDocx", new { RoomId, FileId });
+
+            if (IsXlsx(originalName))
+                return RedirectToPage("/Files/ViewXlsx", new { RoomId, FileId });
+
             if (!IsOfficeFormat(originalName, metadata.ContentType))
                 return BadRequest("Unsupported format for viewing.");
 
@@ -147,6 +153,18 @@ namespace twoSaaSCore.Pages.Files
         {
             var ext = Path.GetExtension(name).ToLowerInvariant();
             return ext == ".pdf" || (contentType?.Equals("application/pdf", StringComparison.OrdinalIgnoreCase) == true);
+        }
+
+        private static bool IsDocx(string name)
+        {
+            var ext = Path.GetExtension(name).ToLowerInvariant();
+            return ext is ".docx" or ".doc";
+        }
+
+        private static bool IsXlsx(string name)
+        {
+            var ext = Path.GetExtension(name).ToLowerInvariant();
+            return ext is ".xlsx" or ".xls";
         }
 
         private static bool IsOfficeFormat(string name, string? contentType)

@@ -1,32 +1,36 @@
 namespace twoSaaSCore.Services;
 
-/// <summary>Options bound to the "DocumentConversion" configuration section.</summary>
+/// <summary>
+/// Configuration options for document watermarking and conversion.
+/// Bound from the "DocumentConversion" section of appsettings.json.
+/// </summary>
 public class DocumentConversionOptions
 {
-    /// <summary>Whether to apply a watermark to downloaded/viewed PDFs.</summary>
+    /// <summary>Whether watermarking is enabled for downloads and viewers.</summary>
     public bool WatermarkEnabled { get; set; } = true;
 
     /// <summary>
-    /// Template for the watermark text stamped on each PDF page.
-    /// Supported placeholders: {UserId}, {Email}, {TenantId}, {Ip}, {Utc}.
+    /// Template string for watermark text. Supports placeholders:
+    /// {UserId}, {Email}, {TenantId}, {Ip}, {Utc}.
     /// </summary>
     public string WatermarkText { get; set; } = "{Email} | {Ip} | {Utc}";
 
-    /// <summary>Whether to cache Office-to-PDF conversions in blob storage.</summary>
+    /// <summary>Whether to cache server-side PDF conversions of Office files.</summary>
     public bool CachePdf { get; set; } = true;
 
     /// <summary>
-    /// Resolves placeholder tokens in <see cref="WatermarkText"/> with runtime values.
+    /// Resolves placeholder tokens in the watermark template to actual values.
     /// </summary>
-    public string ResolveWatermark(string? userId = null, string? email = null,
-                                    string? tenantId = null, string? ip = null)
+    public string ResolveWatermark(string? userId, string? email, string? tenantId, string? ip)
     {
+        if (!WatermarkEnabled || string.IsNullOrWhiteSpace(WatermarkText))
+            return string.Empty;
+
         return WatermarkText
-            .Replace("{UserId}", userId ?? "", System.StringComparison.OrdinalIgnoreCase)
-            .Replace("{Email}", email ?? "", System.StringComparison.OrdinalIgnoreCase)
-            .Replace("{TenantId}", tenantId ?? "", System.StringComparison.OrdinalIgnoreCase)
-            .Replace("{Ip}", ip ?? "", System.StringComparison.OrdinalIgnoreCase)
-            .Replace("{Utc}", System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") + " UTC",
-                     System.StringComparison.OrdinalIgnoreCase);
+            .Replace("{UserId}", userId ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{Email}", email ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{TenantId}", tenantId ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{Ip}", ip ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{Utc}", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm"), StringComparison.OrdinalIgnoreCase);
     }
 }
